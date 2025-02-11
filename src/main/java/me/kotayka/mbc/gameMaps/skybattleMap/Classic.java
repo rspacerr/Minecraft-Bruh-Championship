@@ -4,6 +4,8 @@ import me.kotayka.mbc.MBC;
 import me.kotayka.mbc.Participant;
 import me.kotayka.mbc.MBCTeam;
 import me.kotayka.mbc.games.Skybattle;
+import net.md_5.bungee.api.ChatMessageType;
+import net.md_5.bungee.api.chat.TextComponent;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.BrewingStand;
@@ -19,17 +21,17 @@ import java.util.Arrays;
 import java.util.List;
 
 public class Classic extends SkybattleMap {
-    private final Location CENTER = new Location(getWorld(), -157, 100, -266);
-    public final double RADIUS_SHRINK_AMOUNT = 0.37;
-    public final double HEIGHT_SHRINK_AMOUNT = 0.22;
+    private final Location CENTER = new Location(getWorld(), 0, 100, 0);
+    public final double RADIUS_SHRINK_AMOUNT = 0.35; // previously 0.37
+    public final double HEIGHT_SHRINK_AMOUNT = 0.2; // previously 0.22
     private float borderRadius = 80;
     private final Location[] SPAWNS = {
-        new Location(getWorld(), -220, 71, -266),
-        new Location(getWorld(), -190, 71, -212),
-        new Location(getWorld(), -124, 71, -212),
-        new Location(getWorld(), -94, 71, -266),
-        new Location(getWorld(), -124, 71, -320),
-        new Location(getWorld(), -190, 71, -320),
+        new Location(getWorld(), 33, 71, 54),
+        new Location(getWorld(), -33, 71, 54),
+        new Location(getWorld(), -63, 71, 0),
+        new Location(getWorld(), 63, 71, 0),
+        new Location(getWorld(), -33, 71, -54),
+        new Location(getWorld(), 33, 71, -54),
     };
 
     private List<ItemStack> spawnItems = new ArrayList<>(5);
@@ -48,18 +50,18 @@ public class Classic extends SkybattleMap {
      * there is also probably a better way to do this but nah
      */
     public void resetMap() {
-        SKYBATTLE.resetKillMaps();
+        SKYBATTLE.resetMaps();
         setBorderHeight(120);
         setBorderRadius(80);
 
-        // reset world
-        int x = 225;
-        int y = -16;
-        int z = 322;
+        // reset world (center @ -300 75 300)
+        int x = -368;
+        int y = 63;
+        int z = 241;
         World world = getWorld(); // convenience
-        for (int mapX = -225; mapX <= -87; mapX++) {
+        for (int mapX = -68; mapX <= 70; mapX++) {
             for (int mapY = 63; mapY <= 96; mapY++) {
-                for (int mapZ = -325; mapZ <= -207; mapZ++) {
+                for (int mapZ = -59; mapZ <= 59; mapZ++) {
                     Block originalBlock = world.getBlockAt(x, y, z);
                     Block possiblyChangedBlock = world.getBlockAt(mapX, mapY, mapZ);
                     if (!(originalBlock.getType().name().equals(possiblyChangedBlock.getType().name()))) {
@@ -78,10 +80,10 @@ public class Classic extends SkybattleMap {
                     }
                     z++;
                 }
-                z = 322;
+                z = 241;
                 y++;
             }
-            y = -16;
+            y = 63;
             x++;
         }
         removeEntities();
@@ -98,13 +100,13 @@ public class Classic extends SkybattleMap {
             for (double t = 0; t < 50; t+=0.5) {
                 double x = (getBorderRadius() * (float) Math.cos(t)) + CENTER.getX();
                 double z = (getBorderRadius() * (float) Math.sin(t)) + CENTER.getZ();
-                getWorld().spawnParticle(Particle.REDSTONE, x, y, z, 1, SKYBATTLE.BORDER_PARTICLE);
+                getWorld().spawnParticle(Particle.DUST, x, y, z, 1, SKYBATTLE.BORDER_PARTICLE);
             }
         }
 
-        for (int x = -170; x < -142; x+=2) {
-            for (int z = -278; z < -252; z+=2) {
-                getWorld().spawnParticle(Particle.REDSTONE, x, getBorderHeight(), z, 1, SKYBATTLE.TOP_BORDER_PARTICLE);
+        for (int x = -14; x < 14; x+=2) {
+            for (int z = -13; z < 13; z+=2) {
+                getWorld().spawnParticle(Particle.DUST, x, getBorderHeight(), z, 1, SKYBATTLE.TOP_BORDER_PARTICLE);
             }
         }
 
@@ -116,19 +118,22 @@ public class Classic extends SkybattleMap {
             boolean aboveBorder = player.getLocation().getY() >= getBorderHeight();
             boolean outsideBorder = distance < 0;
 
-            if (aboveBorder && outsideBorder) {
-                player.damage(0.5*Math.abs(player.getLocation().getY()-getBorderHeight()+0.5 + 0.009*Math.abs(distance)+0.5));
-            } else if (aboveBorder) {
-                player.damage(0.5*Math.abs(player.getLocation().getY()-getBorderHeight()+0.5));
-            } else if (outsideBorder) {
-                player.damage(0.009*Math.abs(distance)+0.5);
+            if (aboveBorder || outsideBorder) {
+                player.spigot().sendMessage(ChatMessageType.ACTION_BAR, new TextComponent(ChatColor.DARK_RED + "You're in the border!"));
+                if (aboveBorder && outsideBorder) {
+                    player.damage(0.5*Math.abs(player.getLocation().getY()-getBorderHeight()+0.5 + 0.009*Math.abs(distance)+0.5));
+                } else if (aboveBorder) {
+                    player.damage(0.5*Math.abs(player.getLocation().getY()-getBorderHeight()+0.5));
+                } else {
+                    player.damage(0.009*Math.abs(distance)+0.5);
+                }
             }
         }
     }
 
     public void initSpawnItems() {
         ItemStack pick = new ItemStack(Material.IRON_PICKAXE);
-        pick.addEnchantment(Enchantment.DIG_SPEED, 3);
+        pick.addEnchantment(Enchantment.EFFICIENCY, 3);
         ItemMeta meta = pick.getItemMeta();
         meta.setUnbreakable(true);
         pick.setItemMeta(meta);
@@ -204,9 +209,9 @@ public class Classic extends SkybattleMap {
         // TODO ?
         // since this goes through the whole map, there's a lot of redundant checking going on.
         // if anyone is stumbling across this in the future, feel free to write more code to reduce this.
-        for (int x = -222; x <= -92; x++) {
+        for (int x = -65; x <= 65; x++) {
             for (int y = 71; y <= 73; y++) {
-                for (int z = -322; z <= -210; z++) {
+                for (int z = -56; z <= 56; z++) {
                     if (getWorld().getBlockAt(x, y, z).getType().equals(Material.BARRIER)) {
                         getWorld().getBlockAt(x, y, z).setType(Material.AIR);
                     }

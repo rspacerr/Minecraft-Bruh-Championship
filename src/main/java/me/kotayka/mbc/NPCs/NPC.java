@@ -1,24 +1,23 @@
+/*
 package me.kotayka.mbc.NPCs;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
-import me.kotayka.mbc.Participant;
+import com.mojang.authlib.properties.PropertyMap;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityDestroy;
 import net.minecraft.network.protocol.game.PacketPlayOutEntityHeadRotation;
-import net.minecraft.network.protocol.game.PacketPlayOutNamedEntitySpawn;
-import net.minecraft.network.protocol.game.PacketPlayOutPlayerInfo;
+//import net.minecraft.network.protocol.game.PacketPlayOutNamedEntitySpawn;
+//import net.minecraft.network.protocol.game.PacketPlayOutPlayerInfo;
+import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.EntityPlayer;
-import net.minecraft.server.level.PlayerInteractManager;
 import net.minecraft.server.level.WorldServer;
 import net.minecraft.server.network.PlayerConnection;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
-import org.bukkit.craftbukkit.v1_18_R2.CraftServer;
-import org.bukkit.craftbukkit.v1_18_R2.CraftWorld;
-import org.bukkit.craftbukkit.v1_18_R2.entity.CraftPlayer;
+import org.bukkit.craftbukkit.v1_20_R3.CraftServer;
+import org.bukkit.craftbukkit.v1_20_R3.CraftWorld;
+import org.bukkit.craftbukkit.v1_20_R3.entity.CraftPlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 
@@ -50,10 +49,33 @@ public class NPC {
     }
 
     public void create(String name) {
+        MinecraftServer minecraftServer = ((CraftServer) Bukkit.getServer()).getServer();
+        ServerLevel serverLevel = ((CraftWorld) location.getWorld()).getHandle();
+        ServerPlayer serverPlayer = new ServerPlayer(minecraftServer, serverLevel, new GameProfile(UUID.randomUUID(), "NPC-Name"), ClientInformation.createDefault());
+        serverPlayer.setPos(location.getX(), location.getY(), location.getZ());
+
+        SynchedEntityData synchedEntityData = serverPlayer.getEntityData();
+        synchedEntityData.set(new EntityDataAccessor<>(17, EntityDataSerializers.BYTE), (byte) 127);
+
+        setValue(serverPlayer, "c", ((CraftPlayer) player).getHandle().connection);
+
+        sendPacket(new ClientboundPlayerInfoUpdatePacket(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, serverPlayer), player);
+        sendPacket(new ClientboundAddEntityPacket(serverPlayer), player);
+        sendPacket(new ClientboundSetEntityDataPacket(serverPlayer.getId(), synchedEntityData.getNonDefaultValues()), player);
+        Bukkit.getScheduler().runTaskLaterAsynchronously(plugin, new Runnable() {
+            @Override
+            public void run() {
+                sendPacket(new ClientboundPlayerInfoRemovePacket(Collections.singletonList(serverPlayer.getUUID())), player);
+            }
+        }, 40);
+    }
+
+    /*
+    public void create(String name) {
         MinecraftServer server = ((CraftServer) Bukkit.getServer()).getServer();
         WorldServer world = ((CraftWorld) Objects.requireNonNull((player).getWorld())).getHandle();
 
-        String[] things = getRequest(player.getName());
+        String[] things = getRequest(player.getUniqueId().toString());
 
         String texture = things[0];
         String signature = things[1];
@@ -94,12 +116,8 @@ public class NPC {
         this.viewers.remove(p);
     }
 
-    public String[] getRequest(String name)  {
+    public String[] getRequest(String uuid)  {
         try {
-            URL url_0 = new URL("https://api.mojang.com/users/profiles/minecraft/" + name);
-            InputStreamReader reader_0 = new InputStreamReader(url_0.openStream());
-            String uuid = new JsonParser().parse(reader_0).getAsJsonObject().get("id").getAsString();
-
             URL url_1 = new URL("https://sessionserver.mojang.com/session/minecraft/profile/" + uuid + "?unsigned=false");
             InputStreamReader reader_1 = new InputStreamReader(url_1.openStream());
             JsonObject textureProperty = new JsonParser().parse(reader_1).getAsJsonObject().get("properties").getAsJsonArray().get(0).getAsJsonObject();
@@ -115,3 +133,4 @@ public class NPC {
     }
 
 }
+ */

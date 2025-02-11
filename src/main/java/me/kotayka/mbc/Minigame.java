@@ -3,31 +3,42 @@ package me.kotayka.mbc;
 import me.kotayka.mbc.comparators.TeamScoreSorter;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
+import org.bukkit.Sound;
+import org.bukkit.SoundCategory;
 import org.bukkit.entity.Player;
 import org.bukkit.event.Listener;
 import org.bukkit.scoreboard.DisplaySlot;
 import org.bukkit.scoreboard.Objective;
 
-import java.util.*;
+import java.util.List;
+import java.util.LinkedList;
+import java.util.Objects;
+import java.util.Collections;
+import java.util.HashMap;
 
 /**
- * This class is for lobby-related minigames that do not necessitate the full package of a point-scoring game.
+ * Template class representing a Minecraft minigame.
+ * The class <b>Game</b> extends this class.
+ *
+ * As a standalone, this class is suitable for lobby-related games that do not have scoring mechanics.
  * Examples:
  *      Lobby
  *      Decision Dome / Voting gimmick
  *      Any hub minigame put in place, i.e. trick-or-treat/presents/milk the cow
  */
 public abstract class Minigame implements Scoreboard, Listener {
-    public String gameName;
+    private final String NAME;
     private GameState gameState = GameState.INACTIVE;
     public int timeRemaining = -1;
-    public static int taskID = -1;
+    private int taskID = -1;
+    public StatLogger logger;
 
     // GLOBAL STRING STORAGE FOR STORING STRINGS TO PRINT WHILE PERFORMING TASKS (ie sorting through game scores)
     protected String TO_PRINT = "";
+    private List<String> mutedMessages = new LinkedList<String>();
 
     public Minigame(String name) {
-        gameName = name;
+        NAME = name;
     }
 
     /**
@@ -57,7 +68,6 @@ public abstract class Minigame implements Scoreboard, Listener {
 
     public void setTimer(int time) {
         if (timeRemaining != -1) {
-            // if the time hasn't run out yet, stop the time and start it again
             stopTimer();
         }
 
@@ -80,13 +90,29 @@ public abstract class Minigame implements Scoreboard, Listener {
         }, 20, 20);
     }
 
+    public void initLogger() {
+        logger = new StatLogger(this);
+    }
+
+    public StatLogger getLogger() {
+        return logger;
+    }
+
     public void Pause() {
+        if (this instanceof Lobby && timeRemaining != -1) {
+            Bukkit.broadcastMessage("Event Paused!");
+            gameState = GameState.PAUSED;
+            stopTimer();
+            for (Player p : Bukkit.getOnlinePlayers()) {
+                p.sendTitle("PAUSED", "", 20, 60, 20);
+            }
+        }
         if (!(gameState == GameState.STARTING) || this instanceof DecisionDome || this instanceof Lobby) {
             // don't pause if game has started or minigame
             return;
         }
 
-        Bukkit.broadcastMessage("Event Paused!");
+        Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + " Event has been paused!");
         gameState = GameState.PAUSED;
         stopTimer();
         createLineAll(20, "EVENT PAUSED");
@@ -137,9 +163,33 @@ public abstract class Minigame implements Scoreboard, Listener {
         }
     }
 
+    /**
+     * Graphics for counting down when a game is about to start.
+     * Includes Sound s.
+     * Should only be called when gameState() is GameState.STARTING
+     * since it directly uses timeRemaining
+     * Does not handle events for when timer hits 0 (countdown finishes).
+     */
+    public void startingCountdown(Sound s) {
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            if (timeRemaining <= 10 && timeRemaining > 3) {
+                p.sendTitle(ChatColor.AQUA + "Starting in:", ChatColor.BOLD + ">" + timeRemaining + "<", 0, 20, 0);
+            } else if (timeRemaining == 3) {
+                p.playSound(p, s, SoundCategory.RECORDS, 1, 1);
+                p.sendTitle(ChatColor.AQUA + "Starting in:", ChatColor.BOLD + ">" + ChatColor.RED + "" + ChatColor.BOLD + timeRemaining + ChatColor.WHITE + "" + ChatColor.BOLD + "<", 0, 20, 0);
+            } else if (timeRemaining == 2) {
+                p.playSound(p, s, SoundCategory.RECORDS, 1, 1);
+                p.sendTitle(ChatColor.AQUA + "Starting in:", ChatColor.BOLD + ">" + ChatColor.YELLOW + "" + ChatColor.BOLD + timeRemaining + ChatColor.WHITE + "" + ChatColor.BOLD + "<", 0, 20, 0);
+            } else if (timeRemaining == 1) {
+                p.playSound(p, s, SoundCategory.RECORDS, 1, 1);
+                p.sendTitle(ChatColor.AQUA + "Starting in:", ChatColor.BOLD + ">" + ChatColor.GREEN + "" + ChatColor.BOLD + timeRemaining + ChatColor.WHITE + "" + ChatColor.BOLD + "<", 0, 20, 0);
+            }
+        }
+    }
+
     public void createLine(int score, String line, Participant p) {
-        if (p.objective == null || !Objects.equals(p.gameObjective, gameName)) {
-            p.gameObjective = gameName;
+        if (p.objective == null || !Objects.equals(p.gameObjective, NAME)) {
+            p.gameObjective = NAME;
             MBC.getInstance().getMinigame().newObjective(p);
             MBC.getInstance().getMinigame().createScoreboard(p);
         }
@@ -167,20 +217,6 @@ public abstract class Minigame implements Scoreboard, Listener {
         }
     }
 
-    /**
-     * Sorts teams by their current round score to place onto scoreboard.
-     */
-    public void updateInGameTeamScoreboard() {
-        if (MBC.getInstance().finalGame) { finalGameScoreboard(); return; }
-
-        List<MBCTeam> teamRoundsScores = getValidTeams();
-        teamRoundsScores.sort(new TeamRoundSorter());
-
-        for (int i = 14; i > 14-teamRoundsScores.size(); i--) {
-            MBCTeam t = teamRoundsScores.get(14-i);
-            createLineAll(i,String.format("%s: %.1f", t.teamNameFormat(), t.getMultipliedCurrentScore()));
-        }
-    }
 
     public void finalGameScoreboard() {
         List<MBCTeam> teams = getValidTeams();
@@ -230,6 +266,12 @@ public abstract class Minigame implements Scoreboard, Listener {
         }
     }
 
+    /**
+     * Removes a line from the scoreboard.
+     *
+     * @param p The Participant whose scoreboard should be changed
+     * @param line Index of the line on the scoreboard to be reset.
+     */
     public void resetLine(Participant p, int line) {
         if (p.lines.containsKey(line)) {
             p.objective.getScoreboard().resetScores(p.lines.get(line));
@@ -275,7 +317,7 @@ public abstract class Minigame implements Scoreboard, Listener {
             p.objective.unregister();
         }
 
-        p.gameObjective = gameName;
+        p.gameObjective = NAME;
         Objective obj;
 
         if (p.board.getObjective("Objective") == null) {
@@ -291,5 +333,13 @@ public abstract class Minigame implements Scoreboard, Listener {
 
         p.objective = obj;
         obj.setDisplaySlot(DisplaySlot.SIDEBAR);
+    }
+
+    /**
+     * Returns the name of the game represented by the instance of this class
+     * @return NAME
+     */
+    public String name() {
+        return NAME;
     }
 }

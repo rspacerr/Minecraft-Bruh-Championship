@@ -1,13 +1,13 @@
 package me.kotayka.mbc;
 
 import me.kotayka.mbc.comparators.TotalIndividualComparator;
+import net.kyori.adventure.text.TextComponent;
 import org.bukkit.Bukkit;
 import org.bukkit.ChatColor;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.PlayerInventory;
-import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.*;
 import org.bukkit.scoreboard.Scoreboard;
-import org.bukkit.scoreboard.Team;
 
 import java.util.*;
 
@@ -41,8 +41,15 @@ public class Participant {
         player=p;
         p.setScoreboard(board);
 
-        Bukkit.broadcastMessage("[Debug] assigning team");
         changeTeam(MBC.getInstance().spectator);
+        MBC.getInstance().participants.add(this);
+    }
+
+    public Participant(Player p, MBCTeam team) {
+        player=p;
+        p.setScoreboard(board);
+
+        changeTeam(team);
         MBC.getInstance().participants.add(this);
     }
 
@@ -225,6 +232,15 @@ public class Participant {
             board.getTeam(team.fullName).addPlayer(player);
         }
 
+        // add to health scoreboard
+        if (board.getObjective("showhealth") == null) {
+            Objective h = board.registerNewObjective("showhealth", Criterias.HEALTH, ChatColor.RED + "❤");
+            h.setDisplaySlot(DisplaySlot.BELOW_NAME);
+        } else {
+            Objective h = board.getObjective("showhealth");
+            h.setDisplaySlot(DisplaySlot.BELOW_NAME);
+        }
+
         for (Participant p : MBC.getInstance().getPlayersAndSpectators()) {
             // add everyone else to this player's scoreboard
             if (board.getTeam(p.getTeam().fullName) == null) {
@@ -233,6 +249,7 @@ public class Participant {
                 scoreboardTeam.setPrefix(String.format("%s%c ", ChatColor.WHITE, p.getTeam().getIcon()));
                 scoreboardTeam.setAllowFriendlyFire(false);
                 scoreboardTeam.addPlayer(p.getPlayer());
+                scoreboardTeam.setOption(Team.Option.COLLISION_RULE, Team.OptionStatus.NEVER);
             } else {
                 board.getTeam(p.getTeam().fullName).addPlayer(p.getPlayer());
             }
@@ -244,10 +261,25 @@ public class Participant {
                 scoreboardTeam.setPrefix(String.format("%s%c ", ChatColor.WHITE, team.getIcon()));
                 scoreboardTeam.setAllowFriendlyFire(false);
                 scoreboardTeam.addPlayer(player);
+                scoreboardTeam.setOption(Team.Option.COLLISION_RULE, Team.OptionStatus.NEVER);
             } else {
                 // add player to team
                 p.board.getTeam(team.fullName).addPlayer(player);
             }
+
+            // add to health scoreboard
+            if (p.board.getObjective("showhealth") == null) {
+                Objective h2 = board.registerNewObjective("showhealth", Criterias.HEALTH, ChatColor.DARK_RED + "❤");
+                h2.setDisplaySlot(DisplaySlot.BELOW_NAME);
+            } else {
+                Objective h2 = board.getObjective("showhealth");
+                h2.setDisplaySlot(DisplaySlot.BELOW_NAME);
+            }
         }
+    }
+
+    @Override
+    public int hashCode() {
+        return player.getUniqueId().hashCode();
     }
 }

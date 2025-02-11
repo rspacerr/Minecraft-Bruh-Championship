@@ -171,31 +171,73 @@ public abstract class MBCTeam {
         };
     }
 
+    public ItemStack getGlass() {
+        return switch (getChatColor()) {
+            case RED -> new ItemStack(Material.RED_STAINED_GLASS_PANE);
+            case YELLOW -> new ItemStack(Material.YELLOW_STAINED_GLASS_PANE);
+            case GREEN -> new ItemStack(Material.GREEN_STAINED_GLASS_PANE);
+            case BLUE -> new ItemStack(Material.BLUE_STAINED_GLASS_PANE);
+            case DARK_PURPLE -> new ItemStack(Material.PURPLE_STAINED_GLASS_PANE);
+            case LIGHT_PURPLE -> new ItemStack(Material.PINK_STAINED_GLASS_PANE);
+            default -> new ItemStack(Material.GLASS_PANE);
+        };
+    }
+
     public static MBCTeam getTeam(String team) {
-        switch (team.toLowerCase()) {
+        switch (team.strip().toLowerCase()) {
             case "redrabbits":
             case "redrabbit":
+            case "redravens":
+            case "redraven":
+            case "redreindeers":
+            case "redreindeer":
             case "red":
+            case "red_":
                 return MBC.getInstance().red;
             case "yellowyaks":
             case "yellowyak":
+            case "mustardmummies":
+            case "mustardmummie":
+            case "yellowyetis":
+            case "yellowyeti":
             case "yellow":
+            case "yellow_":
                 return MBC.getInstance().yellow;
             case "greenguardians":
             case "greenguardian":
+            case "greengoblins":
+            case "greengoblin":
+            case "emeraldelves":
+            case "emeraldelve":
             case "green":
+            case "green_":
                 return MBC.getInstance().green;
             case "bluebats":
             case "bluebat":
+            case "bluebanshees":
+            case "bluebanshee":
+            case "sapphiresantas":
+            case "sapphiresanta":
             case "blue":
+            case "blue_":
                 return MBC.getInstance().blue;
             case "purplepandas":
             case "purplepanda":
+            case "violetvampires":
+            case "violetvampire":
+            case "purplepenguins":
+            case "purplepenguin":
             case "purple":
+            case "purple_":
                 return MBC.getInstance().purple;
             case "pinkpiglets":
             case "pinkpiglet":
+            case "fuchsiafrankensteins":
+            case "fuchsiafrankenstein":
+            case "pinkpresents":
+            case "pinkpresent":
             case "pink":
+            case "pink_":
                 return MBC.getInstance().pink;
             case "spectator":
             case "spectators":
@@ -277,13 +319,12 @@ public abstract class MBCTeam {
 
     /**
      * Announces team death.
-     * TODO: maybe a sound effect
      */
     public void announceTeamDeath() {
         // small delay to sync messages correctly
-        String s = teamNameFormat() + " have been eliminated!";
+        String s = "" + teamNameFormat() + " have been eliminated!";
 
-        MBC.getInstance().getGame().getLogger().log(s);
+        MBC.getInstance().getMinigame().getLogger().log(s);
 
         Bukkit.getScheduler().scheduleSyncDelayedTask(MBC.getInstance().plugin, new Runnable() {
             @Override
@@ -326,7 +367,6 @@ class TeamUnMultipliedScoreSorter implements Comparator<MBCTeam> {
         return a.getRawTotalScore() - b.getRawTotalScore();
     }
 }
-
 class TeamRoundSorter implements Comparator<MBCTeam> {
     public TeamRoundSorter() {}
 
@@ -338,3 +378,4 @@ class TeamRoundSorter implements Comparator<MBCTeam> {
         return (int) (b.getMultipliedCurrentScore() - a.getMultipliedCurrentScore()); // reverse so bigger numbers are at the top when sorted
     }
 }
+

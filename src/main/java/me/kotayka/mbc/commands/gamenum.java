@@ -19,7 +19,8 @@ public class gamenum implements CommandExecutor {
         }
 
         if (args.length != 1) {
-            sender.sendMessage(ChatColor.RED+"Usage: /gamenum [number (1-6)]");
+            sender.sendMessage(ChatColor.RED+"Usage: /gamenum [number (0-5)]");
+            return false;
         }
 
         int n;
@@ -30,16 +31,19 @@ public class gamenum implements CommandExecutor {
             return false;
         }
 
-        if (!(n >= 1 && n <= MBC.MAX_TEAMS)) {
-            sender.sendMessage(ChatColor.RED+"Invalid number! Use a number 1-6 inclusive!");
+        if (!(n >= 0 && n <= MBC.GAME_COUNT)) {
+            sender.sendMessage(ChatColor.RED+"Invalid number! Use a number 0-6 inclusive!");
             return false;
         }
 
         MBC.getInstance().setGameNum(n);
+        // This looks messed up but it's to compensate for `incrementMultiplier` being called
+        // in decision dome
         double newMult = switch (n) {
-            case 2, 3 -> 1.5;
-            case 4, 5 -> 2.0;
-            case 6 -> 2.5;
+            case 1 -> 1.5;
+            case 2,3 -> 2.0;
+            case 4 -> 2.5;
+            case 5 -> 3.0;
             default -> 1.0;
         };
         MBC.getInstance().setMultiplier(newMult);

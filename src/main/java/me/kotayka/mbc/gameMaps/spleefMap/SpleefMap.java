@@ -1,21 +1,29 @@
 package me.kotayka.mbc.gameMaps.spleefMap;
 
-import me.kotayka.mbc.GameState;
-import me.kotayka.mbc.gameMaps.MBCMap;
 import org.bukkit.Bukkit;
+import org.bukkit.World;
 
-public abstract class SpleefMap extends MBCMap {
+public abstract class SpleefMap {
     private final String name;
     private final int deathY;
+    private final World world = Bukkit.getWorld("spleef");
+    private final String mapType;
 
-    public SpleefMap(String name, int deathY) {
-        super(Bukkit.getWorld("spleef"));
+
+    public SpleefMap(String name, int deathY, String mapType) {
         this.name = name;
         this.deathY = deathY;
+        this.mapType = mapType;
     }
+
+    public World getWorld() { return world; }
 
     public String Name() {
         return name;
+    }
+
+    public String getMapType() {
+        return mapType;
     }
 
     /**

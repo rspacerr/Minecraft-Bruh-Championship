@@ -1,5 +1,6 @@
 package me.kotayka.mbc.gameMaps.sgMaps;
 
+import com.ibm.icu.impl.Pair;
 import me.kotayka.mbc.MBC;
 import me.kotayka.mbc.Participant;
 import me.kotayka.mbc.MBCTeam;
@@ -7,6 +8,8 @@ import me.kotayka.mbc.gameMaps.MBCMap;
 import org.bukkit.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Item;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -14,9 +17,13 @@ import java.util.HashMap;
 public abstract class SurvivalGamesMap extends MBCMap {
     public int[][] spawns;
     public Location CENTER;
+    public String type;
     public java.util.Map<Location, Block> blocks = new HashMap<Location, Block>();
     public Location[] middleChests;
+    public int spawnY;
     public java.util.Map<Location, Material> brokenBlocks = new HashMap<Location, Material>();
+    public boolean hasElevationBorder;
+    public int borderHeight = -128; // if used (indicated by hasElevationBorder), should be reset in map.resetBorder()
 
     protected WorldBorder border = getWorld().getWorldBorder();
     //public boolean airdrops; // incase future maps may require airdrops: not implemented yet
@@ -39,7 +46,7 @@ public abstract class SurvivalGamesMap extends MBCMap {
 
         ArrayList<Location> tempSpawns = new ArrayList<>(spawns.length);
         for (int[] spawn : spawns) {
-            tempSpawns.add(new Location(getWorld(), spawn[0], 2, spawn[1]));
+            tempSpawns.add(new Location(getWorld(), spawn[0], spawnY, spawn[1]));
         }
 
         for (MBCTeam t : MBC.getInstance().getValidTeams()) {
@@ -59,7 +66,11 @@ public abstract class SurvivalGamesMap extends MBCMap {
             getWorld().getBlockAt(entry.getKey()).setType(entry.getValue());
         }
 
-        MBC.getInstance().sg.resetCrates();
+        for (Entity e : getWorld().getEntitiesByClass(Item.class)) {
+            e.remove();
+        }
+
+        //MBC.getInstance().sg.resetCrates();
     }
 
     public Location Center() { return CENTER; }
@@ -75,4 +86,6 @@ public abstract class SurvivalGamesMap extends MBCMap {
     public abstract void startBorder();
 
     public abstract void Overtime();
+
+    public abstract void Border();
 }

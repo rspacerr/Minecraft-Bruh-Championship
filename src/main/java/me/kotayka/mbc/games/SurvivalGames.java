@@ -3,28 +3,37 @@ package me.kotayka.mbc.games;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
 import me.kotayka.mbc.*;
-import me.kotayka.mbc.gameMaps.sgMaps.BCA;
+import me.kotayka.mbc.gameMaps.sgMaps.JesuscraftTwo;
 import me.kotayka.mbc.gameMaps.sgMaps.SurvivalGamesMap;
 import org.bukkit.*;
+import org.bukkit.block.Block;
+import org.bukkit.block.BlockFace;
 import org.bukkit.block.Chest;
-import org.bukkit.block.ShulkerBox;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.enchantments.Enchantment;
-import org.bukkit.entity.EntityType;
-import org.bukkit.entity.Player;
+import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.block.Action;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
+import org.bukkit.event.entity.EntityDamageEvent.DamageCause;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.player.PlayerInteractEntityEvent;
-import org.bukkit.event.player.PlayerInteractEvent;
-import org.bukkit.event.player.PlayerJoinEvent;
-import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.event.player.*;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.EnchantmentStorageMeta;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.inventory.meta.SkullMeta;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.projectiles.ProjectileSource;
+import org.bukkit.util.Vector;
+import org.jetbrains.annotations.NotNull;
 import org.json.simple.parser.ParseException;
 
 import java.io.File;
@@ -35,33 +44,54 @@ import java.lang.reflect.Type;
 import java.util.*;
 
 public class SurvivalGames extends Game {
-    private final SurvivalGamesMap map = new BCA();
+    private final SurvivalGamesMap map = new JesuscraftTwo();
+    private WorldBorder border = null;
     private List<SurvivalGamesItem> items;
-    private List<SurvivalGamesItem> supply_items;
 
     // This file must be in /home/MBCAdmin/MBC/ and re-added each time an update is made
     private final File CHEST_FILE = new File("survival_games_items.json");
     private final File SUPPLY_FILE = new File("supply_crate_items.json");
     private SurvivalGamesEvent event = SurvivalGamesEvent.GRACE_OVER;
-    private final List<Location> chestLocations = new ArrayList<Location>(50);
-    private final List<SupplyCrate> crates = new ArrayList<SupplyCrate>(3);
     private Map<Player, Integer> playerKills = new HashMap<>();
     private Map<MBCTeam, Integer> teamPlacements = new HashMap<>();
-    private boolean dropLocation = false;
-    private int crateNum = 0;
     private int deadTeams = 0; // just to avoid sync issues w/teamsAlive.size()
+    private boolean firstRound = true;
+    private Map<Player, Double> playerDamage = new HashMap<>();
+
+    private Map<MBCTeam, Horcrux> horcruxMap = new HashMap<>();
+    private List<Horcrux> horcruxList = new ArrayList<>();
 
     // Enchantment
     private final GUIItem[] guiItems = setupGUIItems();
 
+    private BossBar bossBar;
+
     // SCORING
-    public final int KILL_POINTS = 35;
-    public final int SURVIVAL_POINTS = 3;
-    public final int[] TEAM_BONUSES = {72, 60, 48, 36, 24, 12};
-    public final int WIN_POINTS = 36; // shared amongst all remaining players
+    public final int KILL_POINTS_INITIAL = 15;
+    public int killPoints = KILL_POINTS_INITIAL;
+    public final int SURVIVAL_POINTS = 1;
+    // Shared amongst each team: 12, 10, 9, 7, 6, 5 points for each player
+    public final int[] TEAM_BONUSES_4 = {48, 40, 36, 28, 24, 20};
+    public final int[] TEAM_BONUSES_3 = {36, 30, 27, 21, 18, 15};
+    private double totalDamage = 0;
+    // public final int WIN_POINTS = 36; // shared amongst all remaining players
 
     public SurvivalGames() {
-        super("SurvivalGames");
+        super("SurvivalGames", new String[] {
+                "⑬ " + ChatColor.BOLD + "In a world..." + ChatColor.RESET + "spawn in with nothing, collect items through chests, emerge the last team standing!\n\n" + 
+                "⑬ There will be a short grace period.",
+                "⑬ Purchase items at the enchant table, drag and click books to enchant!\n\n" + 
+                "⑬ Additionally, watch out for the border, " + ChatColor.BOLD + " you will not be able to break glass or open doors behind the border.",
+                "⑬ Live as long as you can, and place your teams horcrux for one revive!\n\n" +
+                "⑬ There are two rounds, so remember who killed you...",
+                ChatColor.BOLD + "Scoring: \n" + ChatColor.RESET +
+                        "⑬ +5-15 points for eliminations\n" +
+                        "⑬ +150 points split based on % of damage dealt\n" +
+                        "⑬ +1 points for every player outlived\n" +
+                        "⑬ Team Bonuses (split amongst team):\n" +
+                        "     ⑬ 1st: +12 points, 2nd: +10 points, 3rd: +9 points\n" +
+                        "     ⑬ 4th: +7 points, 5th: +6 points, 6th: +5 points"
+        });
 
         for (MBCTeam t : getValidTeams()) {
             teamPlacements.put(t, getValidTeams().size());
@@ -80,25 +110,67 @@ public class SurvivalGames extends Game {
         Type listType = new TypeToken<List<SurvivalGamesItem>>() {}.getType();
         Reader reader = new FileReader(CHEST_FILE);
         items = gson.fromJson(reader, listType);
-        reader = new FileReader(SUPPLY_FILE);
-        supply_items = gson.fromJson(reader, listType);
         reader.close();
     }
 
     @Override
     public void loadPlayers() {
+        for (Horcrux h : horcruxList) {
+            h.inUse = false;
+            h.placed = false;
+            h.used = false;
+            if (h.armorStand != null) {
+                h.armorStand.remove();
+                h.armorStand = null;
+            }
+        }
+        totalDamage = 0;
+
+        if (bossBar != null) {
+            bossBar.setVisible(false);
+        }
+
         setPVP(false);
+        deadTeams = 0;
+        killPoints = KILL_POINTS_INITIAL;
+        // possibly redundant
+        if (!teamsAlive.isEmpty()) {
+            teamsAlive.clear();
+        }
         teamsAlive.addAll(getValidTeams());
         map.setBarriers(true);
+
         map.spawnPlayers();
+        if (!playersAlive.isEmpty()) {
+            playersAlive.clear();
+        }
         for (Participant p : MBC.getInstance().getPlayers()) {
+            p.getPlayer().removePotionEffect(PotionEffectType.GLOWING);
             playersAlive.add(p);
+            playerDamage.put(p.getPlayer(), 0.0);
             p.getPlayer().getInventory().clear();
+            ItemStack endCrystal = new ItemStack(Material.END_CRYSTAL);
+
+            ItemMeta meta = endCrystal.getItemMeta();
+            if (meta != null) {
+                meta.setDisplayName("Horcrux");
+                endCrystal.setItemMeta(meta);
+            }
+
+            p.getInventory().setItem(8, endCrystal);
+            p.getPlayer().setInvulnerable(true);
+            p.getPlayer().setAllowFlight(false);
             p.getPlayer().setExp(0);
             p.getPlayer().setLevel(0);
-            p.getPlayer().addPotionEffect(new PotionEffect(PotionEffectType.SATURATION, 30, 10, false, false));
+            p.getPlayer().addPotionEffect(new PotionEffect(PotionEffectType.SATURATION, 60, 10, false, false));
+            p.getPlayer().removePotionEffect(PotionEffectType.ABSORPTION);
+            p.getPlayer().removePotionEffect(PotionEffectType.WEAKNESS);
             p.getPlayer().setGameMode(GameMode.ADVENTURE);
+            if (map.type.equals("Elytra")) {
+                p.getInventory().setChestplate(new ItemStack(Material.ELYTRA));
+            }
         }
+        updatePlayersAliveScoreboard();
         regenChest();
     }
 
@@ -106,8 +178,18 @@ public class SurvivalGames extends Game {
     public void start() {
         super.start();
 
-        // setGameState(TUTORIAL);
-        setGameState(GameState.STARTING);
+        for (MBCTeam t : getValidTeams()) {
+            Horcrux h = new Horcrux(t);
+            horcruxMap.put(t, h);
+            horcruxList.add(h);
+        }
+
+        for (ItemFrame i : map.getWorld().getEntitiesByClass(ItemFrame.class)) {
+            i.setFixed(true);
+        }
+
+         setGameState(GameState.TUTORIAL);
+        //setGameState(GameState.STARTING);
 
         setTimer(30);
     }
@@ -116,124 +198,255 @@ public class SurvivalGames extends Game {
     public void onRestart() {
         teamPlacements.clear();
         playerKills.clear();
-        crateNum = 0;
+        //crateNum = 0;
         deadTeams = 0;
+        killPoints = KILL_POINTS_INITIAL;
+        if (bossBar != null) {
+            bossBar.setVisible(false);
+        }
 
-        resetCrates();
+        for (Horcrux h : horcruxList) {
+            h.inUse = false;
+            h.placed = false;
+            h.used = false;
+
+            if (h.armorStand != null) {
+                h.armorStand.remove();
+                h.armorStand = null;
+            }
+        }
+
+        for (Participant p : MBC.getInstance().getPlayers()) {
+            playerDamage.put(p.getPlayer(), 0.0);
+        }
+
         map.resetMap();
-        map.resetBorder();
     }
 
     @Override
     public void createScoreboard(Participant p) {
-        createLineAll(21, ChatColor.AQUA+""+ChatColor.BOLD+"Map: " + ChatColor.RESET+ map.mapName);
+        //createLineAll(21, ChatColor.AQUA+""+ChatColor.BOLD+"Map: " + ChatColor.RESET+ map.mapName);
         createLine(19, ChatColor.RESET.toString(), p);
         createLine(4, ChatColor.RESET.toString() + ChatColor.RESET, p);
         updatePlayersAliveScoreboard();
-        createLine(1, ChatColor.YELLOW+""+ChatColor.BOLD+"Your kills: "+ChatColor.RESET+"0", p);
+        createLine(2, ChatColor.YELLOW+""+ChatColor.BOLD+"Your kills: "+ChatColor.RESET+"0", p);
 
         updateInGameTeamScoreboard();
     }
 
     @Override
     public void events() {
-        if (getState().equals(GameState.STARTING)) {
+        if (getState().equals(GameState.TUTORIAL)) {
+            if (timeRemaining == 0) {
+                MBC.getInstance().sendMutedMessages();
+                Bukkit.broadcastMessage("\n" + MBC.MBC_STRING_PREFIX + "The game is starting!\n");
+                setGameState(GameState.STARTING);
+                timeRemaining = 15;
+            } else if (timeRemaining % 7 == 0) {
+                Introduction();
+            }
+        } else if (getState().equals(GameState.STARTING)) {
             if (timeRemaining > 0) {
                 startingCountdown();
+                if (timeRemaining == 10) {
+                    for (Player p : Bukkit.getOnlinePlayers()) {
+                        p.playSound(p, Sound.MUSIC_DISC_FAR, SoundCategory.RECORDS, 1, 1);
+                    }
+                }
             } else {
                 map.setBarriers(false);
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED+"Grace ends in 30 seconds!");
+                bossBar = Bukkit.createBossBar(ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "GRACE PERIOD", BarColor.PURPLE, BarStyle.SOLID);
+                bossBar.setVisible(true);
                 for (Participant p : MBC.getInstance().getPlayers()) {
+                    bossBar.addPlayer(p.getPlayer());
                     p.getPlayer().setGameMode(GameMode.SURVIVAL);
+                    p.getPlayer().removePotionEffect(PotionEffectType.WEAKNESS);
+                    p.getPlayer().removePotionEffect(PotionEffectType.SATURATION);
                 }
                 setGameState(GameState.ACTIVE);
-                Bukkit.broadcastMessage(ChatColor.RED+"Grace ends in 1 minute!");
-                timeRemaining = 720;
+                timeRemaining = 450;
             }
         } else if (getState().equals(GameState.ACTIVE)) {
+            if (map.hasElevationBorder && timeRemaining < 50 && timeRemaining % 2 == 0) {
+                map.Border();
+            }
+            decrementBossBar();
+            checkHorcruxes();
             /*
              * Event timeline:
-             *  12 mins: Game Starts
-             *  11 mins: Grace Ends
-             *  10 mins: First supply crate announced; border begins to move
-             *   9 mins: First supply crate spawns
-             *   8 mins: 1 minute to chest refill, 2nd supply crate announced
-             *   7 mins: Chest Refill, 2nd supply crate spawns, 3rd supply crate announced
-             *   6 mins: Last supply crate lands
+             *  7:30: Game Starts
+             *  7:00: Grace Ends, border starts to move; kills worth 10; elytra removed for elytra maps
+             *  6:00: 1 minute to chest refill, 1st supply crate announced
+             *  5:00: Chest Refill, 1st supply crate drops, 2nd supply crate announced; kills worth 8
+             *  4:00: 2nd supply crate drops, 3rd supply crate announced
+             *  3:00: Last supply crate lands; kills worth 5
              */
-            if (crates.size() > 0) { crateParticles(); }
-
             if (timeRemaining == 0) {
                 if (teamsAlive.size() > 1) {
-                    Bukkit.broadcastMessage(ChatColor.RED+"Border shrinking!");
+                    Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED+"Border shrinking!");
                     map.Overtime();
                     setGameState(GameState.OVERTIME);
+                    if (map.type.equals("Elytra")) {
+                        for (Participant p : playersAlive) {
+                            p.getPlayer().addPotionEffect(new PotionEffect(PotionEffectType.GLOWING, PotionEffect.INFINITE_DURATION, 2, false, false));
+                        }
+                    }
                     timeRemaining = 45;
                 } else {
-                    gameOverGraphics();
-                    roundWinners(0);
+                    createLineAll(23, ChatColor.RED + "" + ChatColor.BOLD+"Round Over!");
+                    damagePoints();
                     for (Participant p : playersAlive) {
                         MBCTeam t = p.getTeam();
                         teamPlacements.put(t, 1);
                     }
                     placementPoints();
-                    setGameState(GameState.END_GAME);
-                    createLineAll(23, "");
-                    timeRemaining = 37;
+                    if (!firstRound) {
+                        for (Player p : Bukkit.getOnlinePlayers()) {
+                            p.stopSound(Sound.MUSIC_DISC_FAR, SoundCategory.RECORDS);
+                        }
+                        bossBar.setVisible(false);
+                        gameOverGraphics();
+                        roundWinners(0, SURVIVAL_POINTS);
+                        setGameState(GameState.END_GAME);
+                        timeRemaining = 37;
+                    } else {
+                        for (Player p : Bukkit.getOnlinePlayers()) {
+                            p.stopSound(Sound.MUSIC_DISC_FAR, SoundCategory.RECORDS);
+                        }
+                        roundOverGraphics();
+                        roundWinners(0, SURVIVAL_POINTS);
+                        setGameState(GameState.END_ROUND);
+                        bossBar.setVisible(false);
+                        firstRound = false;
+                        timeRemaining = 10;
+                    }
                 }
             }
 
-            if (timeRemaining == 660) {
-                event = SurvivalGamesEvent.SUPPLY_CRATE;
-                for (Participant p : MBC.getInstance().getPlayers()) {
-                    p.getPlayer().playSound(p.getPlayer(), Sound.ENTITY_WITHER_SPAWN, 1, 1);
-                }
+            if (timeRemaining == 420) {
+                event = SurvivalGamesEvent.CHEST_REFILL;
+                bossBar.removeAll();
+                bossBar = Bukkit.createBossBar(ChatColor.RED + "" + ChatColor.BOLD + "MAX KILL POINTS / CHEST REFILL", BarColor.RED, BarStyle.SOLID);
+                bossBar.setVisible(true);
                 setPVP(true);
                 getLogger().log(ChatColor.DARK_RED+"Grace period is now over.");
-                Bukkit.broadcastMessage(ChatColor.DARK_RED+"Grace period is now over.");
-                map.startBorder();
-                Bukkit.broadcastMessage(ChatColor.RED+"Border will continue to shrink!");
-            } else if (timeRemaining == 600) {
-                crateLocation();
-            } else if (timeRemaining == 540) {
-                spawnSupplyCrate();
-            } else if (timeRemaining == 480) {
-                event = SurvivalGamesEvent.CHEST_REFILL;
-                crateLocation();
-                Bukkit.broadcastMessage(ChatColor.RED+""+ChatColor.BOLD+"Chests will refill in one minute!");
-            } else if (timeRemaining == 420) {
-                spawnSupplyCrate();
-                for (Player player : Bukkit.getOnlinePlayers()) {
-                    player.sendTitle("", ChatColor.RED+"Chests refilled!", 20, 60, 20);
-                    player.playSound(player, Sound.BLOCK_CHEST_OPEN, 1, 1);
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.DARK_RED+"Grace period is now over.");
+                if (map.type.equals("Elytra")) {
+                    Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.DARK_RED+"Elytras have been removed.");
                 }
+                map.startBorder();
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED+"Border will continue to shrink!");
+
+                // double check elytras are gone
+                for (Participant p : MBC.getInstance().getPlayersAndSpectators()) {
+                    bossBar.addPlayer(p.getPlayer());
+                    p.getPlayer().playSound(p.getPlayer(), Sound.ENTITY_WITHER_SPAWN, 1, 1);
+                    if (p.getPlayer().getGameMode() == GameMode.SPECTATOR) continue;
+                    p.getPlayer().setInvulnerable(false);
+                    if (map.type.equals("Elytra")) {
+                        p.getPlayer().getInventory().remove(Material.ELYTRA);
+                        if (p.getPlayer().getInventory().getChestplate() == null) continue;
+                        if (p.getPlayer().getInventory().getChestplate().getType().equals(Material.ELYTRA)) {
+                            p.getPlayer().getInventory().setChestplate(new ItemStack(Material.AIR));
+                        }
+                    }
+                }
+            } else if (timeRemaining == 360) {
+                event = SurvivalGamesEvent.CHEST_REFILL;
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED+""+ChatColor.BOLD+"Chests will refill in one minute!");
+                //crateLocation();
+            } else if (timeRemaining == 300) {
+                //spawnSupplyCrate();
+                killPoints -= 5;
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED + "" + ChatColor.BOLD + "Kill points are decreasing! (15 -> 10)");
+                bossBar.removeAll();
+                bossBar = Bukkit.createBossBar(ChatColor.RED + "" + ChatColor.BOLD + "KILL POINTS DECREASE", BarColor.RED, BarStyle.SOLID);
+                bossBar.setVisible(true);
+                for (Participant p : MBC.getInstance().getPlayersAndSpectators()) {
+                    bossBar.addPlayer(p.getPlayer());
+                    p.getPlayer().sendTitle("", ChatColor.RED+"Chests refilled!", 20, 60, 20);
+                    p.getPlayer().playSound(p.getPlayer(), Sound.BLOCK_CHEST_OPEN, 1, 1);
+                }
+                regenChest();
                 getLogger().log(ChatColor.RED+""+ChatColor.BOLD+"Chests have been refilled!");
                 Bukkit.broadcastMessage(ChatColor.RED+""+ChatColor.BOLD+"Chests have been refilled!");
-                regenChest();
-                event = SurvivalGamesEvent.SUPPLY_CRATE;
-                crateLocation();
-            } else if (timeRemaining == 360) {
-                spawnSupplyCrate();
                 event = SurvivalGamesEvent.DEATHMATCH;
+            } else if (timeRemaining == 180) {
+                killPoints -= 5;
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.RED.toString() + ChatColor.BOLD + "Kill points are decreasing! (10 -> 5)");
+                bossBar.removeAll();
+                bossBar.setVisible(false);
+            } else if (timeRemaining == 50) {
+                if (map.hasElevationBorder) {
+                    Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.DARK_RED.toString() + ChatColor.BOLD + "The border is rising!");
+                }
             }
             UpdateEvent();
         } else if (getState().equals(GameState.OVERTIME)) {
+            if (map.hasElevationBorder && timeRemaining % 2 == 0) {
+                map.Border();
+            }
+            checkHorcruxes();
+
             if (timeRemaining == 0) {
-                gameOverGraphics();
-                roundWinners(0);
+                createLineAll(23, ChatColor.RED + "" + ChatColor.BOLD+"Round Over!");
                 for (Participant p : playersAlive) {
                     MBCTeam t = p.getTeam();
                     teamPlacements.put(t, 1);
                 }
+                damagePoints();
                 placementPoints();
-                setGameState(GameState.END_GAME);
-                createLineAll(23, "");
-                timeRemaining = 37;
+                if (!firstRound) {
+                    gameOverGraphics();
+                    roundWinners(0, SURVIVAL_POINTS);
+                    setGameState(GameState.END_GAME);
+                    timeRemaining = 37;
+                } else {
+                    roundOverGraphics();
+                    roundWinners(0, SURVIVAL_POINTS);
+                    setGameState(GameState.END_ROUND);
+                    firstRound = false;
+                    timeRemaining = 10;
+                }
+            }
+        } else if (getState().equals(GameState.END_ROUND)) {
+            if (timeRemaining == 1) {
+                for (Horcrux h : horcruxList) {
+                    h.inUse = false;
+                    h.placed = false;
+                    h.used = false;
+
+                    if (h.armorStand != null) {
+                        h.armorStand.remove();
+                        h.armorStand = null;
+                    }
+                }
+                for (Participant p : MBC.getInstance().getPlayers()) {
+                    p.getPlayer().removePotionEffect(PotionEffectType.GLOWING);
+                }
+                map.resetMap();
+                loadPlayers();
+                setGameState(GameState.STARTING);
+                timeRemaining = 30;
             }
         } else if (getState().equals(GameState.END_GAME)) {
-            if (timeRemaining == 35) {
+            if (timeRemaining == 36) {
+                for (Horcrux h : horcruxList) {
+                    h.inUse = false;
+                    h.placed = false;
+                    h.used = false;
+
+                    if (h.armorStand != null) {
+                        h.armorStand.remove();
+                        h.armorStand = null;
+                    }
+                }
+                for (Participant p : MBC.getInstance().getPlayers()) {
+                    p.getPlayer().removePotionEffect(PotionEffectType.GLOWING);
+                }
                 map.resetMap();
             }
-
             gameEndEvents();
         }
     }
@@ -243,101 +456,29 @@ public class SurvivalGames extends Game {
      */
     private void UpdateEvent() {
         for (Participant p : MBC.getInstance().getPlayers()) {
-            // display coordinates of each drop separately
-            if (dropLocation && crates.size() > 0) {
-                Location l = crates.get(crateNum).getLocation();
-                createLine(22, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Supply drop: " + ChatColor.RESET + "(" + l.getX() + ", " + l.getY() + ", " + l.getZ() + ")", p);
-                dropLocation = false;
-            }
-
             switch (event) {
                 case GRACE_OVER ->
-                        createLine(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Grace ends in: " + ChatColor.RESET + getFormattedTime(timeRemaining - 660), p);
+                        createLine(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Grace ends in: " + ChatColor.RESET + getFormattedTime(timeRemaining - 420), p);
                 case CHEST_REFILL ->
-                        createLineAll(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Chest refill: " + ChatColor.RESET + getFormattedTime(timeRemaining - 420));
+                        createLine(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Chest refill: " + ChatColor.RESET + getFormattedTime(timeRemaining - 300), p);
                 case DEATHMATCH ->
-                        createLineAll(23, ChatColor.RED + "" + ChatColor.BOLD + "Deathmatch: " + ChatColor.WHITE + "Active");
+                        createLine(23, ChatColor.RED + "" + ChatColor.BOLD + "Deathmatch: " + ChatColor.WHITE + "Active", p);
                 case SUPPLY_CRATE -> {
                     // hard coded times; the 2nd supply drop coincides with chest refill
-                    int nextTime = (timeRemaining > 540) ? timeRemaining - 540 : timeRemaining - 360;
-                    createLineAll(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Next supply crate: " + ChatColor.RESET + getFormattedTime(nextTime));
+                    int nextTime = (timeRemaining > 240) ? timeRemaining - 240 : timeRemaining - 180;
+                    createLine(23, ChatColor.LIGHT_PURPLE + "" + ChatColor.BOLD + "Next supply crate: " + ChatColor.RESET + getFormattedTime(nextTime), p);
                 }
             }
         }
     }
 
-    /**
-     * Generate location of supply crate
-     */
-    public void crateLocation() {
-        int index = (int) (Math.random()*chestLocations.size());
-
-        Location l = (chestLocations.get(index));
-        chestLocations.remove(l);
-        dropLocation = true;
-        crates.add(new SupplyCrate(l, false));
-        String s = ChatColor.LIGHT_PURPLE+""+ChatColor.BOLD+"Supply crate spawning at " + ChatColor.RESET+"("+l.getX()+", "+l.getY()+", "+l.getZ()+")";
-        getLogger().log(s);
-        Bukkit.broadcastMessage(s);
-    }
-
-    /**
-     * Given the location of the crate is predetermined, replace the block
-     * with the crate block and generate loot
-     * @see SurvivalGames crateLocation()
-     */
-    public void spawnSupplyCrate() {
-        // delete this once it is final
-        double totalWeight = 42;
-        /*for (SurvivalGamesItem item : supply_items) {
-            totalWeight += item.getWeight();
-        }
-        Bukkit.broadcastMessage("[Debug] Total Supply Weight == " + totalWeight);
-         */
-
-        Location l = crates.get(crateNum).getLocation();
-        l.getBlock().setType(Material.BLACK_SHULKER_BOX);
-        ShulkerBox crate = (ShulkerBox) map.getWorld().getBlockAt(l.getBlockX(), l.getBlockY(), l.getBlockZ()).getState();
-
-        int chestItems = (int) (Math.random()*6+5);
-        for (int b = 0; b < chestItems; b++) {
-            // Now choose a random item.
-            int idx = 0;
-            for (double r = Math.random() * totalWeight; idx < supply_items.size() - 1; ++idx) {
-                r -= supply_items.get(idx).getWeight();
-                if (r <= 0.0) break;
-            }
-
-            crate.getInventory().setItem((int) (Math.random()*27), supply_items.get(idx).getItem());
-        }
-    }
-
-    /**
-     * Spawn particles at super chest spawning location
-     */
-    private void crateParticles() {
-        for (SupplyCrate crate : crates) {
-            if (!crate.beenOpened()) {
-                // TODO ? the particles are kind of bad looking LOL
-                Location l = crate.getLocation();
-                map.getWorld().spawnParticle(Particle.FIREWORKS_SPARK, l.getX() + Math.random()*0.5-0.5, l.getBlockY() + 1, l.getZ() + Math.random()*0.5-0.5, 5);
-                map.getWorld().spawnParticle(Particle.VILLAGER_HAPPY, l.getX() + Math.random()*0.5-0.5, l.getBlockY() + Math.random(), l.getZ() + Math.random()*0.5-0.5, 5);
-            }
-        }
-    }
 
     /**
      * Regenerates the loot within every chest in the map.
      * If empty, updates list of eligible Super Chests.
      */
     public void regenChest() {
-        // delete when final.
-        double totalWeight = 114;
-        /*for (SurvivalGamesItem item : items) {
-            totalWeight += item.getWeight();
-        }
-        Bukkit.broadcastMessage("[Debug] Total Weight == " + totalWeight);
-         */
+        double totalWeight = 115.5;
 
         Random rand = new Random();
         Chunk[] c = map.getWorld().getLoadedChunks();
@@ -345,10 +486,6 @@ public class SurvivalGames extends Game {
             for (int x = 0; x < chunk.getTileEntities().length; x++) {//loop through tile entities within loaded chunks
                 if (chunk.getTileEntities()[x] instanceof Chest) {
                     Chest chest = (Chest) chunk.getTileEntities()[x];
-
-                    if (crates.size() < 1 && map.checkChest(chest)) {
-                        chestLocations.add(chest.getLocation());
-                    }
 
                     chest.getInventory().clear();
                     int chestItems = rand.nextInt(2) + 5;
@@ -367,12 +504,30 @@ public class SurvivalGames extends Game {
         }
     }
 
+    @EventHandler
+    public void fallDamage(EntityDamageEvent e) {
+        // cancel fall damage during grace period
+        if (e.getEntity() instanceof Player) {
+            if (getState().equals(GameState.ACTIVE) && timeRemaining >= 420 && timeRemaining <= 450) {
+                if (e.getCause().equals(DamageCause.FALL)) {
+                    return;
+                }
+            }
+        }
+        
+    }
+
     public void placementPoints() {
         for (MBCTeam t : getValidTeams()) {
             for (Participant p : t.getPlayers()) {
                 int placement = teamPlacements.get(t);
-                p.addCurrentScore(TEAM_BONUSES[placement] / getValidTeams().size());
-                p.getPlayer().sendMessage(ChatColor.GREEN+"Your team came in " + getPlace(placement) + " and earned a bonus of " + (TEAM_BONUSES[placement] * MBC.getInstance().multiplier) + " points!");
+                if (t.getPlayers().size() == 4) {
+                    p.addCurrentScore(TEAM_BONUSES_4[placement-1] / t.getPlayers().size());
+                    p.getPlayer().sendMessage(ChatColor.GREEN + "Your team came in " + getPlace(placement) + "!" + MBC.scoreFormatter((int)(TEAM_BONUSES_4[placement-1] / t.getPlayers().size())));
+                } else {
+                    p.addCurrentScore(TEAM_BONUSES_3[placement-1] / t.getPlayers().size());
+                    p.getPlayer().sendMessage(ChatColor.GREEN + "Your team came in " + getPlace(placement) + "!" + MBC.scoreFormatter((int)(TEAM_BONUSES_3[placement-1] / t.getPlayers().size())));
+                }
             }
         }
     }
@@ -386,7 +541,7 @@ public class SurvivalGames extends Game {
         boolean mainHand = p.getInventory().getItemInMainHand().getType() == Material.MUSHROOM_STEW;
         p.addPotionEffect(new PotionEffect(PotionEffectType.REGENERATION, 60, 1, false, true));
         p.playSound(p.getLocation(), Sound.BLOCK_GRASS_BREAK, 1, 1);
-        map.getWorld().spawnParticle(Particle.BLOCK_CRACK, p.getLocation(), 3, Material.DIRT.createBlockData());
+        map.getWorld().spawnParticle(Particle.BLOCK, p.getEyeLocation(), 5, Material.DIRT.createBlockData());
 
         if (mainHand) {
             p.getInventory().setItemInMainHand(null);
@@ -395,18 +550,53 @@ public class SurvivalGames extends Game {
         }
     }
 
+    private void damagePoints() {
+        int sqrtSum = 0;
+        for (Player player : playerDamage.keySet()) {
+            sqrtSum += Math.sqrt(playerDamage.get(player));
+        }
+
+        for (Player player : playerDamage.keySet()) {
+            Participant p = Participant.getParticipant(player);
+            double percentage = 100 *(playerDamage.get(player) / totalDamage);
+            int points = 0;
+            if (percentage != 0) {
+                points = (int) (Math.log(Math.pow(150*Math.sqrt(percentage)/sqrtSum, 5.5)/7));
+                if (points < 0) {
+                    points = 0;
+                }
+            }
+            p.addCurrentScore(points);
+            logger.log(String.format("%s dealt %.2f%% of the total damage and earned %d points!", p.getPlayerName(),percentage,points));
+            p.getPlayer().sendMessage(String.format("%sYou dealt %.2f%% of the total damage and earned %d points!", ChatColor.GREEN, percentage, points));
+        }
+    }
+
+    private void removeEndCrystal(Player player) {
+        // Remove one end crystal from the player's inventory
+        for (ItemStack item : player.getInventory().getContents()) {
+            if (item != null && item.getType() == Material.END_CRYSTAL) {
+                item.setAmount(item.getAmount() - 1);
+                if (item.getAmount() <= 0) {
+                    player.getInventory().remove(item);
+                }
+                break;
+            }
+        }
+    }
+
     /**
      * Handles Custom Inventory for Enchanting, Tracking opened loot boxes, and mushroom stew.
      */
     @EventHandler
     public void onPlayerInteract(PlayerInteractEvent e) {
-        if (e.getAction().isLeftClick() && e.getClickedBlock() != null && e.getClickedBlock().getType().equals(Material.PAINTING)) {
+        if (!(e.getAction().isRightClick())) return;
+        Player p = e.getPlayer();
+
+        if (e.getClickedBlock() != null && e.getClickedBlock().getType().equals(Material.ANVIL)) {
             e.setCancelled(true);
             return;
         }
-
-        if (!(e.getAction().isRightClick())) return;
-        Player p = e.getPlayer();
 
         if (p.getInventory().getItemInMainHand().getType() == Material.MUSHROOM_STEW || p.getInventory().getItemInOffHand().getType() == Material.MUSHROOM_STEW) {
             eatMushroomStew(p);
@@ -417,22 +607,113 @@ public class SurvivalGames extends Game {
         if (e.getClickedBlock() != null && e.getClickedBlock().getType().equals(Material.ENCHANTING_TABLE)) {
             e.setCancelled(true);
             setupGUI(e.getPlayer());
-            return;
         }
 
-        // Track opened crates
-        if (e.getClickedBlock() != null && e.getClickedBlock().getType().equals(Material.BLACK_SHULKER_BOX)) {
-            crates.get(crateNum).setOpened(true);
-            dropLocation = false;
-            createLineAll(22, "");
-            crateNum++;
-            return;
+        if (e.getAction() == Action.RIGHT_CLICK_BLOCK && e.getHand() == EquipmentSlot.HAND) {
+            Player player = e.getPlayer();
+            Participant person = Participant.getParticipant(player);
+            Block block = e.getClickedBlock();
+
+            if (block != null && e.getBlockFace() == org.bukkit.block.BlockFace.UP) {
+                ItemStack item = e.getItem();
+                if (item != null && item.getType() == Material.END_CRYSTAL && getState().equals(GameState.ACTIVE)) {
+                    for (Participant participant : MBC.getInstance().players) {
+                        if (participant.getTeam().equals(person.getTeam())) {
+                            removeEndCrystal(participant.getPlayer());
+                        }
+                    }
+
+                    Horcrux horcrux = horcruxMap.get(person.getTeam());
+
+                    e.setCancelled(true);
+
+                    if (horcrux.placed) {
+                        return;
+                    }
+
+                    Location loc = block.getLocation().clone().add(new Vector(0.5, 1, 0.5));
+
+                    horcrux.spawn(loc);
+                    horcrux.placed = true;
+                }
+            }
         }
 
         // prevent stripping trees :p
+        if (e.getClickedBlock() != null && e.getClickedBlock().getType().toString().endsWith("SIGN")) {
+            return;
+        }
         if (e.getClickedBlock() == null) return;
         if (e.getClickedBlock().getType().toString().endsWith("LOG") && p.getInventory().getItemInMainHand().getType().toString().endsWith("AXE")) {
             e.setCancelled(true);
+        }
+    }
+
+    public void HandleInteractHorcrux(Player p, ArmorStand a) {
+        Horcrux horcrux = Horcrux.getHorcrux(horcruxList, a);
+        Participant participant = Participant.getParticipant(p);
+
+        if (participant.getTeam().equals(horcrux.team)) {
+            p.sendMessage(ChatColor.RED+"You cannot break your own Horcrux!");
+        }
+        else if (horcrux.inUse) {
+            p.sendMessage(ChatColor.RED+"This Horcrux is currently in use.");
+        }
+        else {
+            MBC.spawnFirework(a.getLocation().clone().add(0.5, 2, 0.5), horcrux.team.getColor());
+
+            logger.log(horcrux.team.getTeamName() + "'s Horcrux was destroyed by " + participant.getPlayerName());
+            for (Participant par : MBC.getInstance().players) {
+                if (par.getTeam().equals(horcrux.team)) {
+                    par.getPlayer().sendMessage(ChatColor.RED+"Your Horcrux has been destroyed by " + participant.getFormattedName() + "!");
+                }
+            }
+
+            horcrux.used = true;
+            a.remove();
+        }
+    }
+
+    @EventHandler
+    public void onDamage(EntityDamageByEntityEvent e) {
+        if (e.getEntity() instanceof ArmorStand) {
+            if (e.getDamager() instanceof Arrow) {
+                e.setCancelled(true);
+                e.getDamager().remove();
+                map.getWorld().dropItemNaturally(e.getEntity().getLocation(), new ItemStack(Material.ARROW));
+                return;
+            }
+        }
+
+        if (e.getDamager() instanceof Player && e.getEntity() instanceof ArmorStand) {
+            HandleInteractHorcrux((Player) e.getDamager(), (ArmorStand) e.getEntity());
+            e.setCancelled(true);
+            return;
+        }
+
+        if (!(e.getEntity() instanceof Player)) return;
+        if (e.getDamager() instanceof Player damager) {
+            if (playerDamage.get(damager) == null) {
+                return;
+            }
+            double previous = playerDamage.get(damager);
+            Player damaged = (Player) e.getEntity();
+            double damage = Math.min(e.getDamage(), damaged.getHealth());
+            playerDamage.put((Player) e.getDamager(), previous + damage);
+            totalDamage += damage;
+            return;
+        }
+
+        if (e.getDamager() instanceof Projectile) {
+            ProjectileSource shooter = ((Projectile) e.getDamager()).getShooter();
+            if (!(shooter instanceof Player)) return;
+            if (playerDamage.get(shooter) == null) {
+                return;
+            }
+            Player damaged = (Player) e.getEntity();
+            double damage = Math.min(e.getDamage(), damaged.getHealth());
+            totalDamage += damage;
+            playerDamage.compute((Player) shooter, (k, previous) -> previous + damage);
         }
     }
 
@@ -442,53 +723,177 @@ public class SurvivalGames extends Game {
     @EventHandler
     public void onDeath(PlayerDeathEvent e) {
         Player victim = e.getPlayer();
+        Horcrux horcrux = horcruxMap.get(Participant.getParticipant(victim).getTeam());
         Participant killer = Participant.getParticipant(victim.getKiller());
+
+        // remove the horcruxes
+        for (ItemStack i : victim.getInventory()) {
+            if (i != null && i.getType().toString().endsWith("CRYSTAL")) {
+                victim.getInventory().remove(i);
+            }
+        }
+
         if (killer != null) {
-            killer.addCurrentScore(KILL_POINTS);
+            killer.addCurrentScore(killPoints);
             if (playerKills.get(victim.getKiller()) == null) {
                 playerKills.put(victim.getKiller(), 1);
-                createLine(1, ChatColor.YELLOW+""+ChatColor.BOLD+"Your Kills: "+ChatColor.RESET+"1", killer);
+                createLine(2, ChatColor.YELLOW+""+ChatColor.BOLD+"Your Kills: "+ChatColor.RESET+"1", killer);
             } else {
                 int kills = playerKills.get(victim.getKiller());
-                playerKills.put(e.getPlayer().getKiller(), kills++);
-                createLine(1, ChatColor.YELLOW+""+ChatColor.BOLD+"Your kills: "+ChatColor.RESET+kills, killer);
+                kills++;
+                playerKills.put(e.getPlayer().getKiller(), kills);
+                createLine(2, ChatColor.YELLOW+""+ChatColor.BOLD+"Your kills: "+ChatColor.RESET+kills, killer);
             }
-            deathEffectsWithHealth(e);
+            deathEffectsWithHealthSG(e, horcrux, e.getPlayer().getLastDamageCause().getCause());
+            killer.getPlayer().playSound(killer.getPlayer(), Sound.ITEM_BOTTLE_FILL_DRAGONBREATH, SoundCategory.BLOCKS, 0.5f, 1);
+    
         } else {
             Participant p = Participant.getParticipant(victim);
             if (p == null) return;
             MBC.spawnFirework(p);
             e.setDeathMessage(e.getDeathMessage().replace(e.getPlayer().getName(), p.getFormattedName()));
-            updatePlayersAlive(p);
+            if (horcrux.used || !horcrux.placed) {
+                updatePlayersAlive(p);
+            }
         }
 
         victim.setGameMode(GameMode.SPECTATOR);
         getLogger().log(e.getDeathMessage());
+        victim.getPlayer().removePotionEffect(PotionEffectType.GLOWING);
 
-        Bukkit.broadcastMessage(e.getDeathMessage());
-        for (ItemStack i : victim.getPlayer().getInventory()) {
+        for (Player play : Bukkit.getOnlinePlayers()) {
+            if (playersAlive.contains(Participant.getParticipant(play))) {
+                play.sendMessage(e.getDeathMessage() + MBC.scoreFormatter(SURVIVAL_POINTS));
+            }
+            else {
+                play.sendMessage(e.getDeathMessage());
+            }
+        }
+        
+        Participant victimParticipant = Participant.getParticipant(victim);
+
+        if (horcrux.used || !horcrux.placed) {
+            int count = 0;
+            for (Participant p : victimParticipant.getTeam().teamPlayers) {
+                if (p.getPlayer().getGameMode().equals(GameMode.SPECTATOR)) {
+                    count++;
+                }
+            }
+
+            if (count == victimParticipant.getTeam().teamPlayers.size()) {
+                teamPlacements.put(victimParticipant.getTeam(), getValidTeams().size() - deadTeams);
+                deadTeams++;
+            }
+
+        }
+
+        for (ItemStack i : victim.getInventory()) {
             if (i == null) continue;
             map.getWorld().dropItemNaturally(victim.getLocation(), i);
         }
+
         e.setCancelled(true);
 
-        int count = 0;
-        Participant victimParticipant = Participant.getParticipant(victim);
-        for (Participant p : victimParticipant.getTeam().teamPlayers) {
-            if (p.getPlayer().getGameMode().equals(GameMode.SPECTATOR)) {
-                count++;
+        for (Participant p : playersAlive) {
+            if (p != victimParticipant) {
+                p.addCurrentScore(SURVIVAL_POINTS);
             }
         }
 
-        if (count == victimParticipant.getTeam().teamPlayers.size()) {
-            teamPlacements.put(victimParticipant.getTeam(), getValidTeams().size() - deadTeams);
-            deadTeams++;
+        if (!horcrux.used && horcrux.placed) {
+            Bukkit.broadcastMessage(victimParticipant.getFormattedName()+ChatColor.BOLD+" is being respawned by their team's " + ChatColor.GOLD + "horcrux!");
+
+            ItemStack playerHead = new ItemStack(Material.PLAYER_HEAD);
+            SkullMeta skullMeta = (SkullMeta) playerHead.getItemMeta();
+            if (skullMeta != null) {
+                skullMeta.setOwningPlayer(victim);
+                playerHead.setItemMeta(skullMeta);
+            }
+
+            // Set the player head on the ArmorStand
+            horcrux.armorStand.setHelmet(playerHead);
+            horcrux.inUse = true;
+
+            Bukkit.getScheduler().runTaskLater(MBC.getInstance().plugin, new Runnable() {
+                @Override
+                public void run() {
+                    victim.getInventory().clear();
+                    victim.teleport(horcrux.location);
+                    victim.addPotionEffect(new PotionEffect(PotionEffectType.SPEED, 100, 3, false, false));
+                    victim.addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS,100, 255, false, true));
+                    victim.addPotionEffect(new PotionEffect(PotionEffectType.SATURATION,100, 3, false, false));
+                    victim.setInvulnerable(true);
+                    victim.setGameMode(GameMode.SURVIVAL);
+                    map.getWorld().spawnParticle(Particle.EXPLOSION, horcrux.location, 10);
+                    map.getWorld().playSound(horcrux.location, Sound.ENTITY_ZOMBIE_VILLAGER_CURE, 1, 1);
+                    victim.sendMessage(MBC.MBC_STRING_PREFIX + "You have been respawned and are invulnerable! Run!");
+                    horcrux.armorStand.remove();
+
+                    // not sure if this is good practice or not.
+                    Bukkit.getScheduler().runTaskLater(MBC.getInstance().plugin, new Runnable() {
+                        @Override
+                        public void run() {
+                            victim.setInvulnerable(false);
+                            victim.sendMessage(MBC.MBC_STRING_PREFIX + "You are no longer invulnerable.");
+                        }
+                    }, 100L);
+                }
+            }, 100L);
         }
 
-        // may require testing due to concurrency
-        for (Participant p : playersAlive) {
-            p.addCurrentScore(SURVIVAL_POINTS);
+        horcrux.used = true;
+    }
+
+    public void deathEffectsWithHealthSG(PlayerDeathEvent e, Horcrux horcrux, EntityDamageEvent.DamageCause damageCause) {
+        Participant victim = Participant.getParticipant(e.getPlayer());
+        Participant killer = Participant.getParticipant(e.getPlayer().getKiller());
+        String deathMessage = e.getDeathMessage();
+
+        if (victim == null) return;
+
+        victim.getPlayer().sendMessage(ChatColor.RED+"You died!");
+        victim.getPlayer().sendTitle(" ", ChatColor.RED+"You died!", 0, 60, 30);
+        MBC.spawnFirework(victim);
+        if (damageCause == DamageCause.CUSTOM) {
+            if (killer != null) {
+                killer.getPlayer().sendMessage(ChatColor.GREEN+"You killed " + victim.getPlayerName() + "!" + MBC.scoreFormatter(killPoints));
+                killer.getPlayer().sendTitle(" ", "[" + ChatColor.BLUE + "x" + ChatColor.RESET + "] " + victim.getFormattedName(), 0, 60, 20);
+                String health = String.format(" ["+ChatColor.RED+"♥ %.2f"+ChatColor.RESET+"]", killer.getPlayer().getHealth());
+                deathMessage = victim.getFormattedName() + " died in the border whilst fighting " + killer.getFormattedName() + health;
+            } else {
+                deathMessage = victim.getFormattedName() + " died in the border";
+            }
+        } else {
+            deathMessage = deathMessage.replace(victim.getPlayerName(), victim.getFormattedName());
+            if (killer != null) {
+                killer.getPlayer().sendMessage(ChatColor.GREEN+"You killed " + victim.getPlayerName() + "!" + MBC.scoreFormatter(killPoints));
+                killer.getPlayer().sendTitle(" ", "[" + ChatColor.BLUE + "x" + ChatColor.RESET + "] " + victim.getFormattedName(), 0, 60, 20);
+                String health = String.format(" ["+ChatColor.RED+"♥ %.2f"+ChatColor.RESET+"]", killer.getPlayer().getHealth());
+                deathMessage = deathMessage.replace(killer.getPlayerName(), killer.getFormattedName()+health);
+            }
         }
+
+        e.setDeathMessage(deathMessage);
+
+        if (horcrux.used || !horcrux.placed) {
+            updatePlayersAlive(victim);
+        }
+    }
+
+    private void decrementBossBar() {
+        if (timeRemaining <= 180) return;
+
+        if (timeRemaining > 420) {
+            bossBar.setProgress((timeRemaining - 420) / 30.0); // grace period time
+            return;
+        }
+
+        if (timeRemaining > 300) {
+            bossBar.setProgress((timeRemaining - 300) / 120.0); // kills worth 10 points time
+            return;
+        }
+
+        bossBar.setProgress((timeRemaining - 180) / 120.0);  // kills worth 8 points time
     }
 
     /**
@@ -501,9 +906,12 @@ public class SurvivalGames extends Game {
 
         // this solution might be temporary, not sure if other maps or other blocks are necessary to add.
         String brokenBlock = e.getBlock().getType().toString();
-        if (!(brokenBlock.contains("GLASS")) && !(e.getBlock().getType().equals(Material.TALL_GRASS)))  e.setCancelled(true);
+        if (brokenBlock.contains("GLASS") || e.getBlock().getType().equals(Material.TALL_GRASS) || e.getBlock().getType().equals(Material.FIRE)) {
+            map.brokenBlocks.put(e.getBlock().getLocation(), e.getBlock().getType());
+            return;
+        }
 
-        map.brokenBlocks.put(e.getBlock().getLocation(), e.getBlock().getType());
+        e.setCancelled(true);
     }
 
     /**
@@ -512,6 +920,44 @@ public class SurvivalGames extends Game {
     @EventHandler
     public void onPlayerEntityInteract(PlayerInteractEntityEvent e) {
         if (e.getRightClicked().getType().equals(EntityType.ITEM_FRAME)) e.setCancelled(true);
+        if (e.getRightClicked() instanceof ArmorStand) {
+
+            Player player = e.getPlayer();
+            ArmorStand armorStand = (ArmorStand) e.getRightClicked();
+
+            HandleInteractHorcrux(player, armorStand);
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler
+    public void onPlayerEntityInteract(PlayerInteractAtEntityEvent e) {
+        if (e.getRightClicked() instanceof ArmorStand) {
+            Player player = e.getPlayer();
+            ArmorStand armorStand = (ArmorStand) e.getRightClicked();
+
+            HandleInteractHorcrux(player, armorStand);
+            e.setCancelled(true);
+        }
+    }
+
+
+    @EventHandler
+    public void onMove(PlayerMoveEvent e) {
+        Player p = e.getPlayer();
+        if (p.getLocation().getY() <= -25) {
+            p.teleport(map.Center());
+            return;
+        }
+
+        if(map.type.equals("Elytra") && getState() == GameState.ACTIVE && p.getGameMode() == GameMode.SURVIVAL && p.getLocation().getBlock().getRelative(BlockFace.DOWN).getType() != Material.AIR) {
+            if (p.getInventory().getChestplate() == null) return;
+            if (p.getInventory().getChestplate().getType().equals(Material.ELYTRA)) {
+                p.getInventory().setChestplate(new ItemStack(Material.AIR));
+            }
+            p.getInventory().remove(Material.ELYTRA);
+        }
+
     }
 
     @EventHandler
@@ -519,8 +965,19 @@ public class SurvivalGames extends Game {
         if (e.getPlayer().getGameMode().equals(GameMode.SURVIVAL)) {
             Participant p = Participant.getParticipant(e.getPlayer());
             if (p == null) return;
-            Bukkit.broadcastMessage(p.getFormattedName() + " disconnected!");
+
             updatePlayersAlive(p);
+
+            for (Player play : Bukkit.getOnlinePlayers()) {
+                if (playersAlive.contains(Participant.getParticipant(play))) {
+                    play.sendMessage(p.getFormattedName() + " disconnected!" + MBC.scoreFormatter(SURVIVAL_POINTS));
+                }
+                else {
+                    play.sendMessage(p.getFormattedName() + " disconnected!");
+                }
+            }
+            
+            
             for (Participant n : playersAlive) {
                 n.addCurrentScore(SURVIVAL_POINTS);
             }
@@ -543,6 +1000,14 @@ public class SurvivalGames extends Game {
     }
 
     @EventHandler
+    public void onDrop(PlayerDropItemEvent e) {
+        if (!e.getPlayer().getLocation().getWorld().equals(map.getWorld())) return;
+        Material i = e.getItemDrop().getItemStack().getType();
+        if (i == Material.ELYTRA) e.setCancelled(true);
+        else return;
+   }
+
+    @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
         if (e.getView().getTitle().equals("Enchanting")) {
             // handle custom enchants;
@@ -551,10 +1016,10 @@ public class SurvivalGames extends Game {
         }
         Player p = (Player) e.getWhoClicked();
         ItemStack book = e.getCursor();
-        if (book == null || book.getType() != Material.ENCHANTED_BOOK) return;
+        if (book.getType() != Material.ENCHANTED_BOOK) return;
         ItemStack tool = e.getCurrentItem();
         if (tool == null) return;
-        if (tool.getEnchantments().size() > 0) {
+        if (!tool.getEnchantments().isEmpty()) {
             p.playSound(p, Sound.ENTITY_ITEM_BREAK, 1, 1);
             p.sendMessage(ChatColor.RED+"Cannot enchant enchanted item!");
         }
@@ -590,7 +1055,7 @@ public class SurvivalGames extends Game {
         if (ench == null) return;
 
         // TODO ? this can probably be rewritten a lot prettier using switches or something else
-        if (toolName.contains("SWORD") && (ench.equals(Enchantment.KNOCKBACK) || ench.equals(Enchantment.DAMAGE_ALL))) {
+        if (toolName.contains("SWORD") && (ench.equals(Enchantment.KNOCKBACK) || ench.equals(Enchantment.SHARPNESS))) {
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1, 2);
             tool.addEnchantment(ench, 1);
             e.setCursor(null);
@@ -598,15 +1063,15 @@ public class SurvivalGames extends Game {
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP,1, 2);
             tool.addEnchantment(ench, 1);
             e.setCursor(null);
-        } else if (toolName.contains("BOOTS") && (ench.equals(Enchantment.PROTECTION_FALL) || ench.equals(Enchantment.PROTECTION_ENVIRONMENTAL))) {
+        } else if (toolName.contains("BOOTS") && (ench.equals(Enchantment.PROTECTION) || ench.equals(Enchantment.PROTECTION))) {
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1, 2);
             tool.addEnchantment(ench, 1);
             e.setCursor(null);
-        } else if (armorNotBoots && ench.equals(Enchantment.PROTECTION_ENVIRONMENTAL)) {
+        } else if (armorNotBoots && ench.equals(Enchantment.PROTECTION)) {
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1, 2);
             tool.addEnchantment(ench, 1);
             e.setCursor(null);
-        } else if (tool.getType().equals(Material.BOW) && ench.equals(Enchantment.ARROW_DAMAGE)){
+        } else if (tool.getType().equals(Material.BOW) && ench.equals(Enchantment.POWER)){
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1, 2);
             tool.addEnchantment(ench, 1);
             e.setCursor(null);
@@ -615,6 +1080,7 @@ public class SurvivalGames extends Game {
             p.sendMessage(ChatColor.RED + "Cannot apply this enchantment to this item!");
             e.setCancelled(true);
         }
+        e.setCancelled(true);
     }
 
     private void setupGUI(Player p) {
@@ -627,10 +1093,12 @@ public class SurvivalGames extends Game {
         p.openInventory(gui);
     }
 
+
     // TODO
     private void handleEnchantGUI(InventoryClickEvent e) {
+        if (e.getCurrentItem() == null) return;
         Material type = e.getCurrentItem().getType();
-        if (type == null) return;
+        //if (type == null) return;
 
         Player p = (Player) e.getWhoClicked();
         GUIItem item = null;
@@ -646,16 +1114,19 @@ public class SurvivalGames extends Game {
 
         ItemStack book = new ItemStack(Material.ENCHANTED_BOOK);
         int level = p.getLevel();
-        if (level < item.cost) {
+        if (p.getInventory().firstEmpty() == -1) {
             p.playSound(p, Sound.ENTITY_ITEM_BREAK, 1, 1);
-            p.sendMessage(ChatColor.RED+"Not enough levels!");
+            p.sendMessage(ChatColor.RED + "Full inventory!");
+        } else if (level < item.cost) {
+            p.playSound(p, Sound.ENTITY_ITEM_BREAK, 1, 1);
+            p.sendMessage(ChatColor.RED + "Not enough levels!");
         } else {
             EnchantmentStorageMeta meta = (EnchantmentStorageMeta) book.getItemMeta();
             meta.addStoredEnchant(item.enchantment, 1, true);
             book.setItemMeta(meta);
-            p.getInventory().addItem(book);
             p.setLevel(level-item.cost);
             p.playSound(p, Sound.ENTITY_EXPERIENCE_ORB_PICKUP, 1, 1);
+            p.getInventory().addItem(book);
             p.closeInventory();
             //p.updateInventory();
         }
@@ -664,15 +1135,15 @@ public class SurvivalGames extends Game {
     }
 
     private GUIItem[] setupGUIItems() {
-        GUIItem[] items = new GUIItem[6];
+        GUIItem[] items = new GUIItem[7];
 
         ItemStack sharpness = new ItemStack(Material.DIAMOND_SWORD);
-        sharpness.addEnchantment(Enchantment.DAMAGE_ALL, 1);
+        sharpness.addEnchantment(Enchantment.SHARPNESS, 1);
         ItemMeta sharpnessMeta = sharpness.getItemMeta();
         sharpnessMeta.setDisplayName(ChatColor.RED+"Sharpness I");
         sharpness.setItemMeta(sharpnessMeta);
         sharpness.setLore(List.of("Cost: 3 XP"));
-        items[0] = new GUIItem(sharpness, Enchantment.DAMAGE_ALL, 3);
+        items[0] = new GUIItem(sharpness, Enchantment.SHARPNESS, 3);
 
         ItemStack knockback = new ItemStack(Material.IRON_SWORD);
         knockback.addEnchantment(Enchantment.KNOCKBACK, 1);
@@ -683,28 +1154,28 @@ public class SurvivalGames extends Game {
         items[1] = new GUIItem(knockback, Enchantment.KNOCKBACK, 1);
 
         ItemStack protection = new ItemStack(Material.DIAMOND_CHESTPLATE);
-        protection.addEnchantment(Enchantment.PROTECTION_ENVIRONMENTAL, 1);
+        protection.addEnchantment(Enchantment.PROTECTION, 1);
         ItemMeta protMeta = protection.getItemMeta();
         protMeta.setDisplayName(ChatColor.GREEN+"Protection I");
         protMeta.setLore(List.of("Cost: 2 XP"));
         protection.setItemMeta(protMeta);
-        items[2] = new GUIItem(protection, Enchantment.PROTECTION_ENVIRONMENTAL, 2);
+        items[2] = new GUIItem(protection, Enchantment.PROTECTION, 2);
 
         ItemStack featherFalling = new ItemStack(Material.IRON_BOOTS);
-        featherFalling.addEnchantment(Enchantment.PROTECTION_FALL, 1);
+        featherFalling.addEnchantment(Enchantment.FEATHER_FALLING, 1);
         ItemMeta ffMeta = featherFalling.getItemMeta();
         ffMeta.setDisplayName(ChatColor.GREEN+"Feather Falling I");
         featherFalling.setItemMeta(ffMeta);
         featherFalling.setLore(List.of("Cost: 1 XP"));
-        items[3] = new GUIItem(featherFalling, Enchantment.PROTECTION_FALL, 1);
+        items[3] = new GUIItem(featherFalling, Enchantment.FEATHER_FALLING, 1);
 
         ItemStack power = new ItemStack(Material.BOW);
-        power.addEnchantment(Enchantment.ARROW_DAMAGE, 1);
+        power.addEnchantment(Enchantment.POWER, 1);
         ItemMeta powerMeta = power.getItemMeta();
         powerMeta.setDisplayName(ChatColor.RED+"Power I");
         power.setItemMeta(powerMeta);
         power.setLore(List.of("Cost: 3 XP"));
-        items[4] = new GUIItem(power, Enchantment.ARROW_DAMAGE, 3);
+        items[4] = new GUIItem(power, Enchantment.POWER, 3);
 
         ItemStack quickCharge = new ItemStack(Material.CROSSBOW);
         quickCharge.addEnchantment(Enchantment.QUICK_CHARGE, 1);
@@ -714,19 +1185,54 @@ public class SurvivalGames extends Game {
         quickCharge.setLore(List.of("Cost: 1 XP"));
         items[5] = new GUIItem(quickCharge, Enchantment.QUICK_CHARGE, 1);
 
-        //ItemStack multishot = new ItemStack(Material.ARROW, 3);
-        //multishot.addEnchantment(Enchantment.MULTISHOT, 1); unfortunately arrows cannot get multishot
-        //items[6] = new GUIItem(multishot, Enchantment.MULTISHOT, 2);
+        ItemStack multishot = new ItemStack(Material.ARROW, 3);
+        multishot.addUnsafeEnchantment(Enchantment.MULTISHOT, 1);
+        ItemMeta msMeta = multishot.getItemMeta();
+        msMeta.setDisplayName(ChatColor.BLUE+"Multishot");
+        multishot.setItemMeta(msMeta);
+        multishot.setLore(List.of("Cost: 2 XP"));
+        items[6] = new GUIItem(multishot, Enchantment.MULTISHOT, 2);
 
         return items;
     }
 
-    /**
-     * Reset all transformed crates
-     */
-    public void resetCrates() {
-        for (SupplyCrate crate : crates) {
-            crate.getLocation().getBlock().setType(Material.CHEST);
+    private void checkHorcruxes() {
+        for (Horcrux h : horcruxList) {
+            if (border == null) {
+                border = map.getWorld().getWorldBorder();
+            }
+
+            if (h.armorStand == null || h.used) continue;
+
+            Location loc = h.armorStand.getLocation();
+            double size = border.getSize()/2;
+            Location center = border.getCenter();
+
+            if (map.hasElevationBorder) {
+                if (loc.getY() <= map.borderHeight) {
+                    h.inUse = false;
+                    h.placed = true;
+                    h.used = true;
+                    h.armorStand.remove();
+                    logger.log(h.team.getTeamName() + "'s Horcrux was destroyed by the border!");
+                    for (Participant p : h.team.getPlayers()) {
+                        p.getPlayer().sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "Your Horcrux was destroyed by the border!");
+                    }
+                    return;
+                }
+            }
+
+            double x = loc.getX() - center.getX(), z = loc.getZ() - center.getZ();
+            if ((x > size || (-x) > size) || (z > size || (-z) > size)) {
+                h.inUse = false;
+                h.placed = true;
+                h.used = true;
+                h.armorStand.remove();
+                logger.log(h.team.getTeamName() + "'s Horcrux was destroyed by the border!");
+                for (Participant p : h.team.getPlayers()) {
+                    p.getPlayer().sendMessage(ChatColor.RED + "" + ChatColor.BOLD + "Your Horcrux was destroyed by the border!");
+                }
+            }
         }
     }
 }
@@ -784,5 +1290,48 @@ class GUIItem {
         this.item = item;
         this.enchantment = enchantment;
         this.cost = cost;
+    }
+}
+
+class Horcrux {
+    public boolean placed = false;
+    public Location location;
+    public ArmorStand armorStand;
+
+    public boolean used = false;
+    public boolean inUse = false;
+
+    public MBCTeam team;
+
+    public Horcrux(MBCTeam t) {
+        team = t;
+    }
+
+    public void spawn(Location loc) {
+        location = loc;
+
+        armorStand = loc.getWorld().spawn(location, ArmorStand.class);
+        armorStand.setArms(true);
+        armorStand.setVisible(true);
+
+        ItemStack leatherHelmet = team.getColoredLeatherArmor(new ItemStack(Material.LEATHER_HELMET));
+        ItemStack leatherChestplate = team.getColoredLeatherArmor(new ItemStack(Material.LEATHER_CHESTPLATE));
+        ItemStack leatherLeggings = team.getColoredLeatherArmor(new ItemStack(Material.LEATHER_LEGGINGS));
+        ItemStack leatherBoots = team.getColoredLeatherArmor(new ItemStack(Material.LEATHER_BOOTS));
+
+        armorStand.setItem(EquipmentSlot.HEAD, leatherHelmet);
+        armorStand.setItem(EquipmentSlot.CHEST, leatherChestplate);
+        armorStand.setItem(EquipmentSlot.LEGS, leatherLeggings);
+        armorStand.setItem(EquipmentSlot.FEET, leatherBoots);
+    }
+
+    public static Horcrux getHorcrux(List<Horcrux> horcruxList, ArmorStand a) {
+        for (Horcrux h : horcruxList) {
+            if (h.armorStand != null && h.armorStand.equals(a)) {
+                return h;
+            }
+        }
+
+        return null;
     }
 }

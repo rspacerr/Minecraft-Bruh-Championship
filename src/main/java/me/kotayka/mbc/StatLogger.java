@@ -13,13 +13,14 @@ public class StatLogger {
     private final Minigame GAME;
     private final String directory;
     private File file;
+    private boolean stupid = false;
     private List<String> transcript = new ArrayList<>();
     private List<String> individual = new ArrayList<>();
     private List<String> teamScores = new ArrayList<>();
 
     public StatLogger(Minigame game) {
         this.GAME = game;
-        directory = MBC.statDirectory();
+        directory = MBC.getInstance().statDirectory();
         file = createFile();
     }
 
@@ -36,7 +37,7 @@ public class StatLogger {
     }
 
     public void logStats() {
-        if (!MBC.getInstance().logStats()) {
+        if (!MBC.getInstance().logStats() || stupid) {
             return;
         }
 
@@ -72,7 +73,7 @@ public class StatLogger {
 
         for (Player p : Bukkit.getOnlinePlayers()) {
             if (p.isOp()) {
-                p.sendMessage(ChatColor.GREEN+"Successfully logged stats for " + GAME.gameName+ ".");
+                p.sendMessage(ChatColor.GREEN+"Successfully logged stats for " + GAME.name() + ".");
             }
         }
     }
@@ -86,14 +87,17 @@ public class StatLogger {
     private File createFile() {
         if (!MBC.getInstance().logStats()) return null;
         try {
-            File file = new File(directory, GAME.gameName+".txt");
+            File file = new File(directory, GAME.name() +".txt");
+            //Bukkit.broadcastMessage(file.getAbsolutePath());
             file.getParentFile().mkdirs();
             if (file.createNewFile()) {
                 return file;
             } else {
                 for (Player p : Bukkit.getOnlinePlayers()) {
-                    if (p.isOp())
-                        p.sendMessage(ChatColor.RED+"ERROR: File already exists!");
+                    if (p.isOp()) {
+                        p.sendMessage(MBC.ADMIN_PREFIX + ChatColor.RED + "ERROR: File already exists!");
+                        stupid = true;
+                    }
                 }
                 return null;
             }

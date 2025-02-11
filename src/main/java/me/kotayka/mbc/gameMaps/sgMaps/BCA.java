@@ -25,8 +25,11 @@ public class BCA extends SurvivalGamesMap {
     public BCA() {
         super.spawns = this.spawns;
         super.middleChests = this.middleChests;
+        super.spawnY = 2;
         super.mapName = "BCA";
+        super.type = "Cornucopia";
         super.CENTER = new Location(getWorld(), 0, 10, 0);
+        super.hasElevationBorder = false;
         //super.airdrops = false;
 
         resetBorder();
@@ -101,16 +104,18 @@ public class BCA extends SurvivalGamesMap {
     public void resetBorder() {
         border.setCenter(0, 0);
         border.setSize(400);
-        border.setDamageBuffer(1);
     }
 
     @Override
     public void startBorder() {
-        border.setSize(30, 630);
+        border.setSize(30, 420);
     }
 
     @Override
     public void Overtime() {
         border.setSize(8, 15);
     }
+
+    // not implemented because super.hasElevationBorder is false.
+    public void Border() {};
 }

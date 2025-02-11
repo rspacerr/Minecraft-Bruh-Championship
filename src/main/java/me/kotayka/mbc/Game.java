@@ -12,6 +12,7 @@ import org.bukkit.event.HandlerList;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.potion.PotionEffect;
 import org.bukkit.potion.PotionEffectType;
+import org.bukkit.scoreboard.Team;
 import org.bukkit.util.Vector;
 
 import javax.annotation.Nullable;
@@ -30,18 +31,21 @@ public abstract class Game extends Minigame {
 
     public List<MBCTeam> teamScores = new ArrayList<>(MBC.getInstance().getValidTeams().size());
     public Map<MBCTeam, Double> scoreMap = new HashMap<>();
-
-    public Game(String gameName) {
-        super(gameName);
-        initLogger();
-    }
-
     public List<Participant> playersAlive = new ArrayList<>();
     public List<MBCTeam> teamsAlive = new ArrayList<>();
-    private StatLogger logger;
     // Used to signal whether or not there has been a disconnect when moving from any state -> starting; if so, pause
     public boolean disconnect = false;
+    protected final String[] INTRODUCTION;
+    protected int introLine = 0;
 
+    // NOTE: although it may be better for each Game class to have an icon,
+    // I'm not doing this currently to avoid future issues of postponing game development
+    // due to a lack of icons, or similar issues.
+    public Game(String gameName, String[] INTRO) {
+        super(gameName);
+        this.INTRODUCTION= INTRO;
+        initLogger();
+    }
 
     public void createScoreboard() {
         for (Participant p : MBC.getInstance().getPlayersAndSpectators()) {
@@ -50,16 +54,32 @@ public abstract class Game extends Minigame {
         }
     }
 
-    private void initLogger() {
-        logger = new StatLogger(this);
+    /**
+     * Print game explanation, one line at a time.
+     *
+     * @modifies introLine
+     */
+    public void Introduction() {
+        if (INTRODUCTION == null || introLine > INTRODUCTION.length) return;
+
+        Bukkit.broadcastMessage(ChatColor.GREEN + "---------------------------------------");
+        Bukkit.broadcastMessage("\n");
+        Bukkit.broadcastMessage(INTRODUCTION[introLine++]);
+        Bukkit.broadcastMessage("\n");
+        Bukkit.broadcastMessage(ChatColor.GREEN + "---------------------------------------");
+        for (Player p : Bukkit.getOnlinePlayers()) {
+            p.playSound(p, Sound.ENTITY_CHICKEN_EGG, 1, 1);
+        }
     }
 
-
     /**
-     * Provide game explanation
+     * Returns a string detailing how the game is scored.
+     * @requires Scoring string is the last string of an introduction.
+     * @return String of how the game will be scored.
      */
-    //public abstract void Introduction();
-
+    public String getScoring() {
+        return INTRODUCTION[INTRODUCTION.length-1];
+    }
 
     public void addPlayerScore(Participant p, int score) {
 
@@ -162,6 +182,7 @@ public abstract class Game extends Minigame {
 
     /**
      * If only one team remains, "cancel" game by setting timeRemaining to 1
+     * @modifies timeRemaining
      * @param t Team to check whether any players remain.
      */
     public void checkLastTeam(MBCTeam t) {
@@ -218,30 +239,17 @@ public abstract class Game extends Minigame {
      * computed by the function call.
      *
      * Standardizes the following:
-     *  Players Remaining is on line 2
-     *  Teams Remaining is on line 1
+     *  Players & Teams Remaining on line 3
      *
      *  Loops for all players by default.
      */
     public void updatePlayersAliveScoreboard() {
-        createLineAll(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players Remaining: " + ChatColor.RESET+playersAlive.size()+"/"+MBC.MAX_PLAYERS);
+        createLineAll(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players: " + ChatColor.RESET+playersAlive.size() + "/"+MBC.getInstance().getPlayers().size() + " | " +
+                                    ChatColor.GREEN + "" + ChatColor.BOLD+"Teams: " + ChatColor.RESET+teamsAlive.size()+"/"+MBC.MAX_TEAMS);
+        /*
+        createLineAll(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players Remaining: " + ChatColor.RESET+playersAlive.size()+"/"+MBC.getInstance().getPlayers().size());
         createLineAll(2, ChatColor.GREEN+""+ChatColor.BOLD+"Teams Remaining: " + ChatColor.RESET+teamsAlive.size()+"/"+MBC.MAX_TEAMS);
-    }
-
-    /**
-     * Updates each player's scoreboards to match that of playersAlive and teamsAlive.
-     * Does not do any computation and assumes playersAlive and teamsAlive has been properly
-     * computed by the function call.
-     *
-     * Standardizes the following:
-     *  Players Remaining is on line 2
-     *  Teams Remaining is on line 1
-     *
-     * @param p Specific participant to update scoreboard
-     */
-    public void updatePlayersAliveScoreboard(Participant p) {
-        createLine(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players Remaining: " + ChatColor.RESET+playersAlive.size()+"/"+MBC.MAX_PLAYERS, p);
-        createLine(2, ChatColor.GREEN+""+ChatColor.BOLD+"Teams Remaining: " + ChatColor.RESET+teamsAlive.size()+"/"+MBC.MAX_TEAMS, p);
+         */
     }
 
     /**
@@ -253,6 +261,26 @@ public abstract class Game extends Minigame {
         if (MBC.getInstance().finalGame) { finalGamePlayerCurrentScoreDisplay(p); return; }
         createLine(0, ChatColor.YELLOW+"Your Coins: "+ChatColor.WHITE+p.getMultipliedCurrentScore(), p);
     }
+
+    /**
+     * Updates each player's scoreboards to match that of playersAlive and teamsAlive.
+     * Does not do any computation and assumes playersAlive and teamsAlive has been properly
+     * computed by the function call.
+     *
+     * Standardizes the following:
+     *  Players & Teams Remaining on line 3
+     *
+     * @param p Specific participant to update scoreboard
+     */
+    public void updatePlayersAliveScoreboard(Participant p) {
+        createLine(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players: " + ChatColor.RESET+playersAlive.size() + "/"+MBC.getInstance().getPlayers().size() + " | " +
+                ChatColor.GREEN + "" + ChatColor.BOLD+"Teams: " + ChatColor.RESET+teamsAlive.size()+"/"+MBC.MAX_TEAMS, p);
+        /*
+        createLine(3, ChatColor.GREEN+""+ChatColor.BOLD+"Players Remaining: " + ChatColor.RESET+playersAlive.size()+"/"+MBC.MAX_PLAYERS, p);
+        createLine(2, ChatColor.GREEN+""+ChatColor.BOLD+"Teams Remaining: " + ChatColor.RESET+teamsAlive.size()+"/"+MBC.MAX_TEAMS, p);
+         */
+    }
+
 
     public void finalGamePlayerCurrentScoreDisplay(Participant p) {
         createLine(0, ChatColor.YELLOW+"Your Coins: "+ChatColor.WHITE+"???", p);
@@ -275,16 +303,15 @@ public abstract class Game extends Minigame {
     public void snowballHit(Snowball proj, Player p) {
         Vector snowballVelocity = proj.getVelocity();
         p.damage(0.1);
-        p.setVelocity(new Vector(snowballVelocity.getX() * 0.1, 0.3, snowballVelocity.getZ() * 0.1));
+        p.setVelocity(new Vector(snowballVelocity.getX() * 0.1, 0.18, snowballVelocity.getZ() * 0.1));
+        proj.remove();
     }
 
     public static String getPlace(int place) {
-        int temp = place;
-        if (temp > 10) {
-            temp %= 10;
+        if (place > 10 && place < 21) {
+            return (place + "th");
         }
-
-        return switch (temp) {
+        return switch (place) {
             case 1 -> place + "st";
             case 2 -> place + "nd";
             case 3 -> place + "rd";
@@ -293,20 +320,50 @@ public abstract class Game extends Minigame {
     }
 
     /**
+     * Sorts teams by their current round score to place onto scoreboard.
+     */
+    public void updateInGameTeamScoreboard() {
+        if (MBC.getInstance().finalGame) { finalGameScoreboard(); return; }
+
+        List<MBCTeam> teamRoundsScores = getValidTeams();
+        teamRoundsScores.sort(new TeamRoundSorter());
+
+        for (int i = 14; i > 14-teamRoundsScores.size(); i--) {
+            MBCTeam t = teamRoundsScores.get(14-i);
+            createLineAll(i,String.format("%s: %.1f", t.teamNameFormat(), t.getMultipliedCurrentScore()));
+        }
+    }
+
+    /**
      * General formatting function to get winners of a round and broadcast text.
      * Adds scoring if specified.
-     * @param points Amount of points to give. Specify 0 for no points.
+     * @param winPoints Amount of win points to give. Specify 0 if none.
+     * @param survivalPoints Amount of survival points to give, which are awarded based on teammate survival. Specify 0 if none or N/A.
      */
-    public void roundWinners(int points) {
+    public void roundWinners(int winPoints, int survivalPoints) {
         String s;
         if (playersAlive.size() > 1) {
             StringBuilder survivors = new StringBuilder("The winners of this round are: ");
             for (int i = 0; i < playersAlive.size(); i++) {
                 Participant p = playersAlive.get(i);
                 winEffects(p);
-                p.getPlayer().sendMessage(ChatColor.GREEN+"You survived the round!");
-                if (points > 0) {
-                    p.addCurrentScore(points);
+                if (winPoints > 0) {
+                    p.getPlayer().sendMessage(ChatColor.GREEN + "You survived the round!" + MBC.scoreFormatter(winPoints));
+                    p.addCurrentScore(winPoints);
+                } else {
+                    p.getPlayer().sendMessage(ChatColor.GREEN+"You survived the round!");
+                }
+
+                // check number of alive teammates
+                int count = 0;
+                for (Participant teammate : p.getTeam().getPlayers()) {
+                    if (teammate.getPlayer().getGameMode() != GameMode.SPECTATOR)
+                        count++;
+                }
+
+                if (count > 1) {
+                    p.getPlayer().sendMessage(ChatColor.GREEN + "You've earned bonus survival points from your teammates!" + MBC.scoreFormatter(survivalPoints * (count-1)));
+                    p.addCurrentScore(survivalPoints * (count-1));
                 }
 
                 if (i == playersAlive.size()-1) {
@@ -317,10 +374,14 @@ public abstract class Game extends Minigame {
             }
             s = survivors.toString()+ChatColor.WHITE+"!";
         } else if (playersAlive.size() == 1) {
-            playersAlive.get(0).getPlayer().sendMessage(ChatColor.GREEN+"You survived the round!");
-            playersAlive.get(0).addCurrentScore(points);
-            winEffects(playersAlive.get(0));
-            s = "The winner of this round is " + playersAlive.get(0).getFormattedName()+"!";
+            if (winPoints > 0) {
+                playersAlive.getFirst().getPlayer().sendMessage(ChatColor.GREEN+"You survived the round!" + MBC.scoreFormatter(winPoints));
+                playersAlive.getFirst().addCurrentScore(winPoints);
+            } else {
+                playersAlive.getFirst().getPlayer().sendMessage(ChatColor.GREEN+"You survived the round!");
+            }
+            winEffects(playersAlive.getFirst());
+            s = "The winner of this round is " + playersAlive.getFirst().getFormattedName()+"!";
         } else {
             s = "Nobody survived the round.";
         }
@@ -352,17 +413,22 @@ public abstract class Game extends Minigame {
        // standards
        for (Participant p : MBC.getInstance().getPlayers()) {
            p.getPlayer().removePotionEffect(PotionEffectType.LEVITATION);
-           p.getPlayer().removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+           p.getPlayer().removePotionEffect(PotionEffectType.RESISTANCE);
            p.getPlayer().removePotionEffect(PotionEffectType.SATURATION);
            p.getPlayer().setGameMode(GameMode.ADVENTURE);
            p.getPlayer().setLevel(0);
            p.getPlayer().setExp(0);
            //MBC.getInstance().individual.add(p);
+
+           // for intro
+           p.getPlayer().addPotionEffect(MBC.SATURATION);
+           p.getPlayer().addPotionEffect(new PotionEffect(PotionEffectType.WEAKNESS, 180, 255, true, false));
        }
+
 
        loadPlayers();
        createScoreboard();
-       createLineAll(25,String.format("%s%sGame %d/6: %s%s", ChatColor.AQUA, ChatColor.BOLD, MBC.getInstance().gameNum, ChatColor.WHITE, gameName));
+       createLineAll(25,String.format("%s%sGame %d/6: %s%s", ChatColor.AQUA, ChatColor.BOLD, MBC.getInstance().gameNum, ChatColor.WHITE, name()));
        createLineAll(15, String.format("%sGame Coins: %s(x%s%.1f%s)", ChatColor.AQUA, ChatColor.RESET, ChatColor.YELLOW, MBC.getInstance().multiplier, ChatColor.RESET));
    }
 
@@ -376,7 +442,7 @@ public abstract class Game extends Minigame {
     */
     public void gameEndEvents() {
         if (MBC.getInstance().finalGame) {
-            gameEndEventsFinal();
+            finalGameEndEvents();
             return;
         }
         // GAME_END should have ~35 seconds by default
@@ -394,7 +460,7 @@ public abstract class Game extends Minigame {
                 Bukkit.broadcastMessage(ChatColor.BOLD + "Current event standings:");
                 TO_PRINT = printEventScores();
             }
-            case 1 -> Bukkit.broadcastMessage(ChatColor.RED + "Returning to lobby...");
+            case 2 -> Bukkit.broadcastMessage(ChatColor.RED + "Returning to lobby...");
             case 28, 20, 12 -> Bukkit.broadcastMessage(TO_PRINT);
             case 0 -> {
                 logger.logStats();
@@ -409,7 +475,7 @@ public abstract class Game extends Minigame {
      */
     public void teamGameEndEvents() {
         if (MBC.getInstance().finalGame) {
-            teamGameEndEventsFinal();
+            finalGameEndEvents();
             return;
         }
         // Team Games should leave at least 25 seconds for GAME_END
@@ -418,14 +484,14 @@ public abstract class Game extends Minigame {
                 Bukkit.broadcastMessage(ChatColor.BOLD + "Each team scored this game:");
                 TO_PRINT = printRoundScores();
             }
-            case 16 -> getScoresNoPrint();
+            case 16 -> getIndivScoresNoPrint();
             case 14 -> {
                 Bukkit.broadcastMessage(ChatColor.BOLD+"Current event standings:");
                 TO_PRINT = printEventScores();
             }
             case 11 -> MBC.getInstance().updatePlacings();
             case 18, 12 -> Bukkit.broadcastMessage(TO_PRINT);
-            case 1 -> Bukkit.broadcastMessage(ChatColor.RED+"Returning to lobby...");
+            case 2 -> Bukkit.broadcastMessage(ChatColor.RED+"Returning to lobby...");
             case 0 -> {
                 logger.logStats();
                 returnToLobby();
@@ -433,42 +499,20 @@ public abstract class Game extends Minigame {
         }
     }
 
-    public void gameEndEventsFinal() {
-        if (timeRemaining > 26) {
-            timeRemaining = 26;
-        }
-        switch (timeRemaining) {
-            case 23 -> {
-                Bukkit.broadcastMessage(ChatColor.BOLD+"Each team scored this game: ");
-                TO_PRINT = printRoundScores();
-            }
-            case 13 -> {
-                Bukkit.broadcastMessage(ChatColor.BOLD+"Top 5 players this game: ");
-                TO_PRINT = getScores();
-            }
-            case 20, 10 -> Bukkit.broadcastMessage(TO_PRINT);
-            case 8 -> MBC.getInstance().updatePlacings();
-            case 1 -> Bukkit.broadcastMessage(ChatColor.RED+"Preparing finale...");
-            case 0 -> {
-                logger.logStats();
-                returnToLobby();
-            }
-        }
-    }
-
-    public void teamGameEndEventsFinal() {
+    public void finalGameEndEvents() {
         if (timeRemaining > 12) {
             timeRemaining = 12;
         }
 
         switch (timeRemaining) {
             case 10 -> {
-                Bukkit.broadcastMessage(ChatColor.BOLD + "Each team scored this game:");
-                TO_PRINT = printRoundScores();
+                Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX +  ChatColor.BOLD + "Skipping score report for last game!");
+                getTeamScoresNoPrint();
+                getIndivScoresNoPrint();
             }
-            case 8 -> Bukkit.broadcastMessage(TO_PRINT);
-            case 5 -> getScoresNoPrint();
-            case 1 -> Bukkit.broadcastMessage(ChatColor.RED + "Preparing finale...");
+            case 8 -> Bukkit.broadcastMessage(MBC.MBC_STRING_PREFIX + ChatColor.BOLD+"Check with admins or <implemented command> to find your score post-reveal!");
+            case 5 -> getIndivScoresNoPrint();
+            case 2 -> Bukkit.broadcastMessage(ChatColor.RED + "Preparing finale...");
             case 3 -> MBC.getInstance().updatePlacings();
             case 0 -> {
                 logger.logStats();
@@ -483,22 +527,23 @@ public abstract class Game extends Minigame {
      * @see Participant addRoundScoreToGame()
      */
     public String getScores() {
-        int num = 0; // separate var incase there is an absurd amount of ties
         StringBuilder topFive = new StringBuilder();
+        int num = 0;
         int lastScore = -1;
-        int counter = 0;
+        int ties = 0;
 
         gameIndividual.addAll(MBC.getInstance().getPlayers());
         gameIndividual.sort(Participant.multipliedCurrentScoreComparator);
         Collections.reverse(gameIndividual);
 
         for (Participant p : gameIndividual) {
-            num++;
-            if (p.getRawCurrentScore() == lastScore) {
-                num--;
-                if (counter == 4) {
-                    counter--; // keep going until no ties
-                }
+            if (ties > 0 && p.getRawCurrentScore() != lastScore) {
+                num+=ties+1;
+                ties = 0;
+            } else if (p.getRawCurrentScore() == lastScore) {
+                ties++;
+            } else {
+                num++;
             }
 
             String score = String.format(
@@ -506,9 +551,8 @@ public abstract class Game extends Minigame {
             );
             logger.logIndividual(score);
             individual.put(p, p.getRawCurrentScore());
-            if (counter < 5) {
+            if (num <= 5) {
                 topFive.append(score);
-                counter++;
             }
             lastScore = p.getRawCurrentScore();
             p.addCurrentScoreToTotal();
@@ -551,7 +595,7 @@ public abstract class Game extends Minigame {
         return teamString.toString();
     }
 
-    public void getScoresNoPrint() {
+    public void getIndivScoresNoPrint() {
         for (Participant p : MBC.getInstance().getPlayers()) {
             String score = String.format(
                     "%s: %.1f (%d x %.1f)\n", p.getFormattedName(), p.getMultipliedCurrentScore(), p.getRawCurrentScore(), MBC.getInstance().multiplier
@@ -562,27 +606,47 @@ public abstract class Game extends Minigame {
         }
     }
 
+    public void getTeamScoresNoPrint() {
+        List<MBCTeam> gameScores = new ArrayList<>(getValidTeams());
+        gameScores.sort(new TeamRoundSorter());
+        StringBuilder teamString = new StringBuilder();
+
+        for (int i = 0; i < gameScores.size(); i++) {
+            MBCTeam t = gameScores.get(i);
+            String str = ChatColor.BOLD+""+(i+1)+". "+String.format("%s: %.1f\n", t.teamNameFormat(), t.getMultipliedCurrentScore());
+            teamString.append(ChatColor.BOLD+""+(i+1)+". ").append(String.format(
+                    "%s: %.1f\n", t.teamNameFormat(), t.getMultipliedCurrentScore()
+            ));
+            logger.logTeamScores(str);
+            scoreMap.put(t, t.getMultipliedCurrentScore());
+        }
+    }
+
     public void returnToLobby() {
         HandlerList.unregisterAll(this);    // game specific listeners are only active when game is
+        stopTimer();
+        MBC.getInstance().showAllPlayers();
         setGameState(GameState.INACTIVE);
         MBC.getInstance().plugin.getServer().getPluginManager().registerEvents(MBC.getInstance().lobby, MBC.getInstance().plugin);
         for (Participant p : MBC.getInstance().getPlayers()) {
+            for (Participant p2 : MBC.getInstance().getPlayers()) {
+                p2.getPlayer().showPlayer(p.getPlayer());
+            }
             if (p.getPlayer().getAllowFlight()) {
                 removeWinEffect(p);
             }
-            p.getPlayer().removePotionEffect(PotionEffectType.DAMAGE_RESISTANCE);
+            p.board.getTeam(p.getTeam().getTeamFullName()).setOption(Team.Option.NAME_TAG_VISIBILITY, Team.OptionStatus.ALWAYS);
+            p.getPlayer().removePotionEffect(PotionEffectType.RESISTANCE);
             p.getPlayer().removePotionEffect(PotionEffectType.WEAKNESS);
             p.getPlayer().removePotionEffect(PotionEffectType.NIGHT_VISION);
-            p.getPlayer().addPotionEffect(new PotionEffect(PotionEffectType.SATURATION, 100000, 10, false, false));
+            p.getPlayer().removePotionEffect(PotionEffectType.DOLPHINS_GRACE);
+            p.getPlayer().removePotionEffect(PotionEffectType.ABSORPTION);
+            p.getPlayer().addPotionEffect(MBC.SATURATION);
             p.getPlayer().getInventory().clear();
             p.getPlayer().setExp(0);
             p.getPlayer().setLevel(0);
 
             p.resetCurrentScores();
-        }
-
-        if (MBC.getInstance().decisionDome == null) {
-            Bukkit.broadcastMessage("[Debug] Decision Dome has not been loaded, you may need to start another game manually or reload!");
         }
 
         MBC.getInstance().gameNum++;
@@ -595,9 +659,8 @@ public abstract class Game extends Minigame {
                 MBC.getInstance().finalGame = true;
             }
             MBC.getInstance().lobby.start();
+            MBC.getInstance().lobby.populatePodium();
         }
-
-        MBC.getInstance().lobby.populatePodium();
     }
 
     /**
@@ -606,11 +669,11 @@ public abstract class Game extends Minigame {
      * @param p Participant that has won a round/game.
      */
     public void winEffects(Participant p) {
+        p.getPlayer().setInvulnerable(true);
         MBC.spawnFirework(p);
         p.getPlayer().setGameMode(GameMode.ADVENTURE);
         p.getPlayer().setAllowFlight(true);
         p.getPlayer().setFlying(true);
-        p.getPlayer().setInvulnerable(true);
     }
 
     /**
@@ -620,10 +683,10 @@ public abstract class Game extends Minigame {
      * @param p Participant to give effects.
      */
     public void flightEffects(Participant p) {
+        p.getPlayer().setInvulnerable(true);
         p.getPlayer().setGameMode(GameMode.ADVENTURE);
         p.getPlayer().setAllowFlight(true);
         p.getPlayer().setFlying(true);
-        p.getPlayer().setInvulnerable(true);
     }
 
     /**
